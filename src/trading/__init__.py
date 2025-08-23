@@ -1,0 +1,1 @@
+"""Trading engine components including position sizing, risk management, and execution."""
