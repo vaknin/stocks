@@ -6,10 +6,10 @@
 # ================================
 # CORE DEEP LEARNING FRAMEWORK
 # ================================
-# PyTorch ecosystem - CUDA 12.5 to match Google Colab
-torch==2.4.1+cu125
-torchvision==0.19.1+cu125
-torchaudio==2.4.1+cu125
+# PyTorch ecosystem - CUDA 12.1 (backward compatible with Colab's CUDA 12.5)
+torch==2.4.1+cu121
+torchvision==0.19.1+cu121
+torchaudio==2.4.1+cu121
 
 # ================================
 # CRITICAL AI MODEL DEPENDENCIES
@@ -103,22 +103,22 @@ psutil==6.0.0
 # ================================
 # GRAPH NEURAL NETWORKS (for SAMBA)
 # ================================
-# PyTorch Geometric for graph neural networks - CUDA 12.5 compatible
+# PyTorch Geometric for graph neural networks - CUDA 12.1 compatible
 torch-geometric==2.6.1
-torch-scatter==2.1.2+cu125
-torch-sparse==0.6.18+cu125
-torch-cluster==1.6.3+cu125
-torch-spline-conv==1.2.2+cu125
+torch-scatter==2.1.2+cu121
+torch-sparse==0.6.18+cu121
+torch-cluster==1.6.3+cu121
+torch-spline-conv==1.2.2+cu121
 
 # ================================
 # VERSION NOTES
 # ================================
 # Key compatibility constraints:
 # - Python: 3.10 or 3.11 (MAPIE doesn't support 3.12 yet)
-# - CUDA: 12.5 (Google Colab default)  
-# - PyTorch: 2.4.1+cu121 (compatible with CUDA 12.5)
-# - mamba-ssm: 1.2.2 (latest stable with causal-conv1d 1.4.0)
-# - mapie: 1.0.1 (supports Python 3.10/3.11, compatible with CUDA 12.5)
+# - CUDA: 12.5 (Google Colab default driver)
+# - PyTorch: 2.4.1+cu121 (backward compatible with CUDA 12.5 driver)
+# - mamba-ssm: 2.2.5 (latest stable with CUDA 12 support)
+# - causal-conv1d: 1.5.2 (CUDA 12 compatible)
 #
 # Installation order is important:
 # 1. PyTorch first (provides CUDA base)

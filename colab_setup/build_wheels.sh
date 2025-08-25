@@ -93,14 +93,14 @@ export PIP_CACHE_DIR="/tmp/pip_cache"
 export PIP_WHEEL_DIR="$TEMP_WHEEL_DIR"
 mkdir -p "$PIP_CACHE_DIR"
 
-# CRITICAL FIX: Install PyTorch first (foundational dependency) - CUDA 12.5
+# CRITICAL FIX: Install PyTorch first (foundational dependency) - CUDA 12.1
 echo "🔥 Installing PyTorch ecosystem first..."
 python3 -m pip wheel \
-    "torch==2.4.1+cu125" \
-    "torchvision==0.19.1+cu125" \
-    "torchaudio==2.4.1+cu125" \
+    "torch==2.4.1+cu121" \
+    "torchvision==0.19.1+cu121" \
+    "torchaudio==2.4.1+cu121" \
     --wheel-dir="$TEMP_WHEEL_DIR" \
-    --extra-index-url https://download.pytorch.org/whl/cu125 \
+    --extra-index-url https://download.pytorch.org/whl/cu121 \
     --prefer-binary
 
 echo "✅ PyTorch wheels built"
@@ -135,8 +135,8 @@ echo ""
 
 # Use pip wheel with --no-build-isolation to fix setup.py issues
 python3 -m pip wheel -r "$REQUIREMENTS_FILE" --wheel-dir="$TEMP_WHEEL_DIR" \
-    --extra-index-url https://download.pytorch.org/whl/cu125 \
-    --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cu125.html \
+    --extra-index-url https://download.pytorch.org/whl/cu121 \
+    --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cu121.html \
     --prefer-binary \
     --find-links "$TEMP_WHEEL_DIR" \
     --no-build-isolation || echo "⚠️ Some wheels failed to build - continuing with available wheels"

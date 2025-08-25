@@ -64,8 +64,7 @@ class DataIngester:
                             end=end_date,
                             interval=interval,
                             auto_adjust=True,  # Adjust for splits and dividends
-                            prepost=False,     # Regular market hours only
-                            threads=True       # Enable threading for faster downloads
+                            prepost=False      # Regular market hours only
                         )
                         
                         if data.empty:
@@ -234,6 +233,57 @@ class DataIngester:
         logger.debug(f"Data quality validation passed for {ticker}")
         return True
     
+    def fetch_single_ticker_data(self, ticker: str, start_date: str, end_date: str, interval: str = "1d") -> pd.DataFrame:
+        """Fetch data for a single ticker (compatibility method for tests).
+        
+        Args:
+            ticker: Stock symbol
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            interval: Data interval
+            
+        Returns:
+            DataFrame with OHLCV data for the ticker
+        """
+        try:
+            result = self.fetch_historical_data(start_date, end_date, interval)
+            return result.get(ticker, pd.DataFrame())
+        except Exception as e:
+            logger.error(f"Error fetching single ticker data for {ticker}: {e}")
+            return pd.DataFrame()
+    
+    def _check_data_freshness(self, data: pd.DataFrame) -> bool:
+        """Check if data is fresh (private method for test compatibility).
+        
+        Args:
+            data: DataFrame with time-indexed data
+            
+        Returns:
+            True if data is considered fresh (less than 24 hours old)
+        """
+        if data.empty:
+            return False
+            
+        try:
+            # Get the latest timestamp from the data
+            latest_date = data.index.max()
+            
+            # Handle timezone-aware vs naive datetime
+            if hasattr(latest_date, 'tz') and latest_date.tz is not None:
+                # Convert to naive datetime for comparison
+                latest_date = latest_date.tz_localize(None) if latest_date.tz else latest_date
+            
+            # Calculate age
+            now = datetime.now()
+            age = now - latest_date
+            
+            # Consider data fresh if less than 24 hours old
+            return age < timedelta(hours=24)
+            
+        except Exception as e:
+            logger.error(f"Error checking data freshness: {e}")
+            return False
+
     def get_data_freshness(self, ticker: str, interval: str = "5m") -> timedelta:
         """Check how fresh the latest data is for a ticker.
         

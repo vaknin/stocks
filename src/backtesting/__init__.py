@@ -1,0 +1,1 @@
+"""Backtesting and validation framework for trading strategies."""

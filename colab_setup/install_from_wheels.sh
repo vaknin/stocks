@@ -76,7 +76,7 @@ grep -v "^https://github.com/" "$REQUIREMENTS_FILE" > /tmp/requirements_filtered
 
 python3 -m pip install --find-links "$WHEEL_CACHE_DIR" \
     --prefer-binary --no-cache-dir \
-    --extra-index-url https://download.pytorch.org/whl/cu125 \
+    --extra-index-url https://download.pytorch.org/whl/cu121 \
     -r /tmp/requirements_filtered.txt
 
 echo ""

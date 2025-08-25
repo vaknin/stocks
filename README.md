@@ -3,8 +3,6 @@
 **Target**: Maximizing long-term monthly revenue generation through AI/semiconductor stock trading
 **Goal**: 8-15% monthly returns on $1-2k test capital
 
-## STRATEGY 3: FINAL OPTIMIZED APPROACH
-
 ### Portfolio Specification
 - **Stocks**: NVDA, AMD, ASML, TSM, INTC, QCOM, AVGO, MU, SMCI, ARM (10 stocks)
 - **Capital**: $1-2k test capital, scaling potential
@@ -49,19 +47,6 @@ See [ROADMAP.md](ROADMAP.md) for detailed implementation plan.
 
 ---
 
-# PREVIOUS STRATEGIES (for reference)
-
-
-1:
-To push accuracy/revenue further:
-
-Enhance Regime Detection: Integrate RL with HMM (e.g., from 2025 papers) for adaptive learning of regimes, improving allocation accuracy by 10-20%.
-Kelly Tweak: Add Bayesian updates to the criterion for real-time learning from trades, as in AI bots—reduces overbetting risks.
-Sentiment Budget: Cap at $20-30/month initially; use free X semantic search for baseline sentiment.
-Testing: Backtest on AI stocks (e.g., NVDA) with your $1-2k test capital; aim for <10% drawdown.
-
-Final Refined Stack Summary
-
 Foundation: TimesFM (primary), TSMamba/MambaStock (patterns), SAMBA (correlations); dynamic meta-weighting.
 Uncertainty: MAPIE conformal intervals; >75% confidence, non-zero 95% interval, >2x costs.
 Sentiment: Rule-based + selective Claude ($50/month cap).
@@ -87,9 +72,6 @@ Trading Rule: Only execute trades when:
 Confidence > 75% (stricter than Strategy 2's 70%)
 Prediction interval excludes zero with 95% confidence
 Expected return > 2x transaction costs
-
-
-
 
 Sentiment Analysis (Cost-Effective Hybrid)
 

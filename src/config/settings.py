@@ -1,7 +1,8 @@
 """Configuration settings for the AI trading system."""
 
 from typing import List, Dict, Any
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 import os
 from pathlib import Path
 
@@ -46,7 +47,7 @@ class TradingConfig(BaseSettings):
     DATABASE_PATH: str = Field(default="data/trading_data.db", description="SQLite database path")
     
     # Model settings
-    TIMESFM_MODEL_SIZE: str = Field(default="google/timesfm-1.0-500m", description="TimesFM model")
+    TIMESFM_MODEL_SIZE: str = Field(default="google/timesfm-2.0-500m-pytorch", description="TimesFM model")
     PREDICTION_HORIZON: List[int] = Field(default=[1, 5, 20], description="Prediction horizons")
     BATCH_SIZE: int = Field(default=32, description="Model batch size")
     

@@ -16,6 +16,13 @@ try:
     MAPIE_AVAILABLE = True
 except ImportError:
     MAPIE_AVAILABLE = False
+    # Define fallback classes when sklearn is not available
+    class RandomForestRegressor:
+        def __init__(self, *args, **kwargs):
+            pass
+    class LinearRegression:
+        def __init__(self, *args, **kwargs):
+            pass
     logger.warning("MAPIE not available. Running in mock mode for uncertainty quantification.")
 
 from ..config.settings import config
@@ -548,3 +555,71 @@ class TradingUncertaintyFilter:
                 new_threshold = max(0.60, self.confidence_threshold - adjustment_rate)
                 logger.info(f"Decreasing confidence threshold from {self.confidence_threshold:.3f} to {new_threshold:.3f}")
                 self.confidence_threshold = new_threshold
+    
+    def filter_prediction(
+        self,
+        prediction: float,
+        confidence: float,
+        prediction_interval: Tuple[float, float],
+        regime_info: Optional[Dict[str, Any]] = None
+    ) -> Optional[float]:
+        """Filter individual prediction based on uncertainty criteria.
+        
+        Args:
+            prediction: Point prediction (expected return)
+            confidence: Model confidence score
+            prediction_interval: Prediction interval [lower, upper]
+            regime_info: Optional regime information for adaptive filtering
+            
+        Returns:
+            Filtered prediction or None if filtered out
+        """
+        # Calculate interval width
+        interval_width = prediction_interval[1] - prediction_interval[0]
+        
+        # Regime-aware thresholds
+        if regime_info:
+            regime_name = regime_info.get('current_regime', '').lower()
+            
+            # Adaptive thresholds based on regime
+            if regime_name == 'high_volatility':
+                max_width_threshold = 0.015  # Tighter in volatile markets
+                confidence_threshold = 0.80   # Higher confidence required
+            elif regime_name == 'bear_trend':
+                max_width_threshold = 0.020  # Moderate tightness in bear
+                confidence_threshold = 0.78   # Slightly higher confidence
+            elif regime_name == 'bull_trend':
+                max_width_threshold = 0.040  # More relaxed in bull
+                confidence_threshold = 0.70   # Standard confidence
+            else:  # sideways or unknown
+                max_width_threshold = 0.030  # Default
+                confidence_threshold = 0.75   # Default
+        else:
+            # Default thresholds
+            max_width_threshold = self.max_interval_width
+            confidence_threshold = self.confidence_threshold
+        
+        # Apply filters
+        if interval_width > max_width_threshold:
+            logger.debug(f"Prediction filtered: interval too wide ({interval_width:.1%} > {max_width_threshold:.1%})")
+            return None
+        
+        if confidence < confidence_threshold:
+            logger.debug(f"Prediction filtered: low confidence ({confidence:.1%} < {confidence_threshold:.1%})")
+            return None
+        
+        if abs(prediction) < self.min_prediction_magnitude:
+            logger.debug(f"Prediction filtered: magnitude too small ({abs(prediction):.1%} < {self.min_prediction_magnitude:.1%})")
+            return None
+        
+        # Check if prediction interval excludes zero (high conviction signal)
+        if prediction > 0 and prediction_interval[0] <= 0:
+            logger.debug("Prediction filtered: positive prediction but interval includes zero")
+            return None
+        elif prediction < 0 and prediction_interval[1] >= 0:
+            logger.debug("Prediction filtered: negative prediction but interval includes zero")
+            return None
+        
+        # All filters passed
+        logger.debug(f"Prediction passed filters: {prediction:.1%} confidence {confidence:.1%}")
+        return prediction
