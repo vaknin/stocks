@@ -41,38 +41,30 @@ fi
 echo "✅ Requirements file found: $REQUIREMENTS_FILE"
 echo ""
 
-# Install Python 3.10 if needed
-if ! command -v python3.10 &> /dev/null; then
-    echo "🐍 Installing Python 3.10..."
-    sudo apt-get update -y
-    sudo apt-get install python3.10 python3.10-distutils -y
-    
-    # Set up alternatives
-    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 2>/dev/null || true
-    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 2
-    sudo update-alternatives --set python3 /usr/bin/python3.10
-    
-    # Install pip for Python 3.10
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
-    echo "✅ Python 3.10 installed"
-else
-    echo "✅ Python 3.10 already available"
-fi
-
+# Python 3.10 setup handled by Colab notebook - skipping
+echo "✅ Python 3.10 setup handled by notebook"
 echo ""
 echo "🚀 Installing packages from cached wheels and direct URLs..."
 echo "⏱️ This should take 2-3 minutes..."
 
-# Install direct URL packages first (mamba-ssm and causal-conv1d)
-echo "⬇️ Installing special packages from direct URLs..."
+# Install PyTorch 2.7 first to prevent auto-upgrade to 2.8
+echo "🔥 Installing PyTorch 2.7.1 (pinned version to prevent mamba_ssm compatibility issues)..."
 python3 -m pip install --no-cache-dir \
-    https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl \
-    https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+    torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
+    --extra-index-url https://download.pytorch.org/whl/cu121
+
+# Install direct URL packages (mamba-ssm and causal-conv1d) with PyTorch 2.7 wheels
+echo "⬇️ Installing mamba_ssm and causal-conv1d (PyTorch 2.7 compatible)..."
+python3 -m pip install --no-cache-dir --no-deps \
+    https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl \
+    https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 # Install remaining packages from cached wheels with fallback to PyPI
 echo "📦 Installing remaining packages from cached wheels..."
-# Create temporary requirements file without the direct URL packages
-grep -v "^https://github.com/" "$REQUIREMENTS_FILE" > /tmp/requirements_filtered.txt
+# Create temporary requirements file without the direct URL packages and PyTorch (already installed)
+grep -v "^https://github.com/" "$REQUIREMENTS_FILE" | \
+    grep -v "^torch==" | grep -v "^torchvision==" | grep -v "^torchaudio==" \
+    > /tmp/requirements_filtered.txt
 
 python3 -m pip install --find-links "$WHEEL_CACHE_DIR" \
     --prefer-binary --no-cache-dir \

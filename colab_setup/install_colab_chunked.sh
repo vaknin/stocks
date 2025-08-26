@@ -24,23 +24,8 @@ fi
 echo "✅ Requirements file found: $REQUIREMENTS_FILE"
 echo ""
 
-# Install Python 3.10 if needed
-if ! command -v python3.10 &> /dev/null; then
-    echo "🐍 Installing Python 3.10..."
-    sudo apt-get update -y
-    sudo apt-get install python3.10 python3.10-distutils -y
-    
-    # Set up alternatives
-    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 2>/dev/null || true
-    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 2
-    sudo update-alternatives --set python3 /usr/bin/python3.10
-    
-    # Install pip for Python 3.10
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
-    echo "✅ Python 3.10 installed"
-else
-    echo "✅ Python 3.10 already available"
-fi
+# Python 3.10 setup handled by Colab notebook - skipping
+echo "✅ Python 3.10 setup handled by notebook"
 
 echo ""
 
@@ -68,11 +53,11 @@ trap cleanup EXIT
 # Install critical packages first (these are most likely to timeout)
 echo "🔧 Installing critical packages first..."
 
-# PyTorch ecosystem - CUDA 12.5
+# PyTorch ecosystem - CUDA 12.1 (backward compatible with 12.5)
 echo "⚡ Chunk 0: PyTorch ecosystem (most critical)"
 timeout $TIMEOUT_PER_CHUNK python3 -m pip install \
-    torch==2.4.1+cu125 torchvision==0.19.1+cu125 torchaudio==2.4.1+cu125 \
-    --extra-index-url https://download.pytorch.org/whl/cu125 \
+    torch==2.4.1+cu121 torchvision==0.19.1+cu121 torchaudio==2.4.1+cu121 \
+    --extra-index-url https://download.pytorch.org/whl/cu121 \
     --prefer-binary --no-cache-dir
 
 echo "✅ PyTorch installed successfully"
@@ -143,8 +128,8 @@ while IFS= read -r line; do
         echo "📦 Packages: ${packages[*]}"
         
         timeout $TIMEOUT_PER_CHUNK python3 -m pip install "${packages[@]}" \
-            --extra-index-url https://download.pytorch.org/whl/cu125 \
-            --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cu125.html \
+            --extra-index-url https://download.pytorch.org/whl/cu121 \
+            --extra-index-url https://data.pyg.org/whl/torch-2.4.0+cu121.html \
             --prefer-binary --no-cache-dir
         
         echo "✅ Chunk $chunk_num completed successfully"

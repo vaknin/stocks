@@ -6,19 +6,19 @@
 # ================================
 # CORE DEEP LEARNING FRAMEWORK
 # ================================
-# PyTorch ecosystem - CUDA 12.1 (backward compatible with Colab's CUDA 12.5)
-torch==2.4.1+cu121
-torchvision==0.19.1+cu121
-torchaudio==2.4.1+cu121
+# PyTorch ecosystem - CUDA 12.1 compatible with PyTorch 2.7 (prevents auto-upgrade to 2.8)
+torch==2.7.1 -f https://download.pytorch.org/whl/torch_stable.html
+torchvision==0.22.1 -f https://download.pytorch.org/whl/torch_stable.html
+torchaudio==2.7.1 -f https://download.pytorch.org/whl/torch_stable.html
 
 # ================================
 # CRITICAL AI MODEL DEPENDENCIES
 # ================================
 # Mamba State Space Models - Direct GitHub wheels to avoid Colab build issues
-# causal-conv1d 1.5.2 with CUDA 12, PyTorch 2.4, Python 3.10, cxx11abiFALSE for Colab
-https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-# mamba-ssm 2.2.5 with CUDA 12, PyTorch 2.4, Python 3.10, cxx11abiFALSE for Colab (VERIFIED WORKING)
-https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.4cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# causal-conv1d 1.5.2 with CUDA 12, PyTorch 2.7, Python 3.10, cxx11abiFALSE for Colab
+https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# mamba-ssm 2.2.5 with CUDA 12, PyTorch 2.7, Python 3.10, cxx11abiFALSE for Colab (VERIFIED WORKING)
+https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 # Transformer models and acceleration
 transformers==4.44.0
@@ -44,7 +44,7 @@ scikit-learn==1.5.2
 # TECHNICAL ANALYSIS
 # ================================
 # Technical indicators
-ta-lib==0.4.32
+Ta-Lib==0.6.5
 pandas-ta==0.3.14b0
 
 # ================================
@@ -105,10 +105,10 @@ psutil==6.0.0
 # ================================
 # PyTorch Geometric for graph neural networks - CUDA 12.1 compatible
 torch-geometric==2.6.1
-torch-scatter==2.1.2+cu121
-torch-sparse==0.6.18+cu121
-torch-cluster==1.6.3+cu121
-torch-spline-conv==1.2.2+cu121
+torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+torch-sparse==0.6.18 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+torch-cluster==1.6.3 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+torch-spline-conv==1.2.2 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
 
 # ================================
 # VERSION NOTES
@@ -116,9 +116,9 @@ torch-spline-conv==1.2.2+cu121
 # Key compatibility constraints:
 # - Python: 3.10 or 3.11 (MAPIE doesn't support 3.12 yet)
 # - CUDA: 12.5 (Google Colab default driver)
-# - PyTorch: 2.4.1+cu121 (backward compatible with CUDA 12.5 driver)
-# - mamba-ssm: 2.2.5 (latest stable with CUDA 12 support)
-# - causal-conv1d: 1.5.2 (CUDA 12 compatible)
+# - PyTorch: 2.7.1+cu121 (prevents auto-upgrade to 2.8 which breaks mamba_ssm)
+# - mamba-ssm: 2.2.5 (latest stable with CUDA 12 support, compiled for PyTorch 2.7)
+# - causal-conv1d: 1.5.2 (CUDA 12 compatible, compiled for PyTorch 2.7)
 #
 # Installation order is important:
 # 1. PyTorch first (provides CUDA base)
