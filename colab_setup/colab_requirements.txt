@@ -25,6 +25,11 @@ transformers==4.44.0
 accelerate==0.34.0
 einops==0.8.0
 
+# TimesFM (Time Series Foundation Model) - PAX version for Python 3.10
+timesfm[pax]==1.2.1
+jax==0.4.23
+jaxlib==0.4.23
+
 # ================================
 # TRADING SYSTEM CORE
 # ================================

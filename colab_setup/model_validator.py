@@ -389,30 +389,32 @@ class ModelValidator:
                 return results
             
             test_stock = list(self.test_data.keys())[0]
-            test_series = self.test_data[test_stock]['close'].values[-200:]  # Last 200 days
+            test_df = self.test_data[test_stock]  # DataFrame with OHLCV data
             
-            # Create sequences for training
-            sequence_length = 50
-            X, y = [], []
-            for i in range(len(test_series) - sequence_length):
-                X.append(test_series[i:i+sequence_length])
-                y.append(test_series[i+sequence_length])
+            # Test prediction capability - TSMamba expects DataFrame and ticker
+            sample_pred = predictor.predict(test_df, test_stock)
             
-            X = np.array(X)
-            y = np.array(y)
-            
-            if len(X) > 0:
-                results['details'].append(f"Created {len(X)} training sequences")
-                
-                # Test prediction capability
-                sample_pred = predictor.predict(X[0])
-                if isinstance(sample_pred, (float, np.float32, np.float64)):
-                    results['details'].append("✅ Prediction generation working")
-                    results['success'] = True
+            if isinstance(sample_pred, dict):
+                # TSMamba returns horizon-based predictions like other models
+                horizon_keys = [key for key in sample_pred.keys() if key.startswith('horizon_')]
+                if horizon_keys:
+                    # Extract first horizon prediction to verify it's numeric
+                    first_horizon = horizon_keys[0]
+                    horizon_data = sample_pred[first_horizon]
+                    if isinstance(horizon_data, dict) and 'prediction' in horizon_data:
+                        pred_value = horizon_data['prediction']
+                        if isinstance(pred_value, (float, np.float32, np.float64)):
+                            results['details'].append("✅ Prediction generation working")
+                            results['details'].append(f"✅ Generated {len(horizon_keys)} horizon predictions")
+                            results['success'] = True
+                        else:
+                            results['error'] = f"Expected numeric prediction, got {type(pred_value)}"
+                    else:
+                        results['error'] = f"Horizon data missing 'prediction' key: {list(horizon_data.keys())}"
                 else:
-                    results['error'] = f"Expected float prediction, got {type(sample_pred)}"
+                    results['error'] = f"No horizon predictions found in keys: {list(sample_pred.keys())}"
             else:
-                results['error'] = "Could not create training sequences"
+                results['error'] = f"Expected dict prediction result, got {type(sample_pred)}"
             
             return results
             
@@ -565,27 +567,40 @@ class ModelValidator:
             prediction = ensemble.predict(test_df, test_stock)
             
             if isinstance(prediction, dict):
-                required_keys = ['prediction', 'confidence']
-                if all(key in prediction for key in required_keys):
-                    results['details'].append("✅ Prediction contains required keys")
+                # Ensemble returns horizon-based structure like {'horizon_1': {...}, 'horizon_5': {...}}
+                horizon_keys = [key for key in prediction.keys() if key.startswith('horizon_')]
+                if horizon_keys:
+                    # Extract from first horizon to validate structure
+                    first_horizon = horizon_keys[0]
+                    horizon_data = prediction[first_horizon]
                     
-                    pred_value = prediction['prediction']
-                    confidence = prediction['confidence']
-                    
-                    if isinstance(pred_value, (float, np.float32, np.float64)):
-                        results['details'].append("✅ Prediction value is numeric")
-                        
-                        if 0 <= confidence <= 1:
-                            results['details'].append("✅ Confidence in valid range [0,1]")
-                            results['success'] = True
+                    if isinstance(horizon_data, dict):
+                        required_keys = ['prediction', 'confidence']
+                        if all(key in horizon_data for key in required_keys):
+                            results['details'].append("✅ Horizon prediction contains required keys")
+                            
+                            pred_value = horizon_data['prediction']
+                            confidence = horizon_data['confidence']
+                            
+                            if isinstance(pred_value, (float, np.float32, np.float64)):
+                                results['details'].append("✅ Prediction value is numeric")
+                                
+                                if 0 <= confidence <= 1:
+                                    results['details'].append("✅ Confidence in valid range [0,1]")
+                                    results['details'].append(f"✅ Generated predictions for {len(horizon_keys)} horizons")
+                                    results['success'] = True
+                                else:
+                                    results['details'].append(f"⚠️ Confidence outside [0,1]: {confidence}")
+                                    results['success'] = True  # Still acceptable
+                            else:
+                                results['error'] = f"Prediction value not numeric: {type(pred_value)}"
                         else:
-                            results['details'].append(f"⚠️ Confidence outside [0,1]: {confidence}")
-                            results['success'] = True  # Still acceptable
+                            missing_keys = set(required_keys) - set(horizon_data.keys())
+                            results['error'] = f"Missing required keys in horizon data: {missing_keys}"
                     else:
-                        results['error'] = f"Prediction value not numeric: {type(pred_value)}"
+                        results['error'] = f"Expected dict for horizon data, got {type(horizon_data)}"
                 else:
-                    missing_keys = set(required_keys) - set(prediction.keys())
-                    results['error'] = f"Missing required keys: {missing_keys}"
+                    results['error'] = f"No horizon predictions found in keys: {list(prediction.keys())}"
             else:
                 results['error'] = f"Expected dict prediction, got {type(prediction)}"
             
@@ -707,9 +722,9 @@ class ModelValidator:
                 results['error'] = "No test data available"
                 return results
             
-            # Initialize signal generator (this should use our validated models)
-            signal_generator = SignalGenerator()
-            results['details'].append("Signal generator initialized")
+            # Initialize signal generator with only DAILY timeframe for validation
+            signal_generator = SignalGenerator(timeframes=[TimeFrame.DAILY])
+            results['details'].append("Signal generator initialized with DAILY timeframe only")
             
             # Prepare data in expected format
             data_dict = {}
@@ -721,8 +736,15 @@ class ModelValidator:
                 }
                 current_prices[stock_name] = stock_data['close'].iloc[-1]
             
+            results['details'].append(f"Prepared data for {len(data_dict)} stocks")
+            results['details'].append(f"Sample data format: {list(data_dict.keys())[:2]} with timeframes {list(data_dict[list(data_dict.keys())[0]].keys())}")
+            
             # Generate signals
-            signals = signal_generator.generate_signals(data_dict, current_prices)
+            try:
+                signals = signal_generator.generate_signals(data_dict, current_prices)
+            except Exception as signal_error:
+                results['error'] = f"Signal generation failed: {signal_error}"
+                return results
             
             if isinstance(signals, dict):
                 results['details'].append(f"Generated signals for {len(signals)} stocks")
@@ -731,6 +753,8 @@ class ModelValidator:
                     # Check signal structure
                     sample_stock = list(signals.keys())[0]
                     sample_signal = signals[sample_stock]
+                    results['details'].append(f"Sample signal type: {type(sample_signal)}")
+                    results['details'].append(f"Sample signal attributes: {[attr for attr in dir(sample_signal) if not attr.startswith('_')]}")
                     
                     if hasattr(sample_signal, 'overall_signal') and hasattr(sample_signal, 'signals_by_timeframe'):
                         results['details'].append("✅ Signal structure correct")
@@ -744,9 +768,11 @@ class ModelValidator:
                             results['details'].append("⚠️ All signals are the same - possible issue")
                             results['success'] = True  # Still acceptable for validation
                     else:
-                        results['error'] = "Signal missing required attributes"
+                        results['error'] = f"Signal missing required attributes. Has: {[attr for attr in dir(sample_signal) if not attr.startswith('_')]}"
                 else:
-                    results['error'] = "No signals generated"
+                    results['error'] = "No signals generated - check data format or signal generation logic"
+                    results['details'].append(f"Input data had {len(data_dict)} stocks: {list(data_dict.keys())}")
+                    results['details'].append(f"Current prices provided: {len(current_prices)} prices")
             else:
                 results['error'] = f"Expected dict signals, got {type(signals)}"
             

@@ -356,6 +356,101 @@ class TestModelIntegration:
                 assert pred['ticker'] == 'NVDA'
 
 
+class TestIntervalWidthValidation:
+    """Test prediction interval width constraints for production signals."""
+    
+    def test_timesfm_mock_interval_width_compliance(self):
+        """Test that TimesFM mock predictions produce intervals within 4% threshold."""
+        predictor = TimesFMPredictor(context_len=32, horizon_len=[1, 5, 10])
+        
+        # Generate multiple mock predictions to test consistency
+        interval_widths = []
+        for i in range(20):  # Test multiple predictions
+            mock_pred = predictor._mock_prediction('TEST', 3)
+            
+            for horizon_key in ['horizon_1', 'horizon_5', 'horizon_10']:
+                if horizon_key in mock_pred:
+                    pred_interval = mock_pred[horizon_key]['prediction_interval']
+                    width = (pred_interval[1] - pred_interval[0]) * 100  # Convert to percentage
+                    interval_widths.append(width)
+        
+        # Verify ALL intervals are within 4% threshold
+        max_width = max(interval_widths)
+        avg_width = np.mean(interval_widths)
+        
+        assert max_width < 4.0, f"Maximum interval width {max_width:.2f}% exceeds 4% threshold"
+        assert avg_width < 3.0, f"Average interval width {avg_width:.2f}% should be well under 4%"
+        assert all(width < 4.0 for width in interval_widths), "Some intervals exceed 4% threshold"
+        
+        print(f"✅ Interval width validation: max={max_width:.2f}%, avg={avg_width:.2f}%")
+    
+    def test_ensemble_interval_width_compliance(self):
+        """Test that ensemble predictions maintain interval width compliance."""
+        from src.models.ensemble import MetaLearningEnsemble
+        
+        ensemble = MetaLearningEnsemble(horizon_len=[1, 5])
+        
+        # Create sample data
+        dates = pd.date_range(start='2024-01-01', end='2024-02-01', freq='D')
+        sample_data = pd.DataFrame({
+            'open': 100 + np.random.randn(len(dates)),
+            'high': 102 + np.random.randn(len(dates)),
+            'low': 98 + np.random.randn(len(dates)),
+            'close': 100 + np.random.randn(len(dates)),
+            'volume': 1000000 + np.random.randint(-100000, 100000, len(dates))
+        }, index=dates)
+        
+        # Generate ensemble prediction
+        prediction = ensemble.predict(sample_data, 'TEST')
+        
+        for horizon_key in ['horizon_1', 'horizon_5']:
+            if horizon_key in prediction:
+                pred_interval = prediction[horizon_key]['prediction_interval']
+                width_pct = (pred_interval[1] - pred_interval[0]) * 100
+                
+                assert width_pct < 4.0, f"Ensemble {horizon_key} interval width {width_pct:.2f}% exceeds 4%"
+    
+    def test_bull_market_regime_interval_filtering(self):
+        """Test interval width filtering specifically for bull market regime."""
+        from src.models.uncertainty import TradingUncertaintyFilter
+        
+        filter_obj = TradingUncertaintyFilter()
+        
+        # Test predictions with different interval widths
+        test_cases = [
+            (0.02, 0.8, (0.015, 0.025)),  # 1% width - should pass
+            (0.02, 0.8, (0.01, 0.03)),    # 2% width - should pass  
+            (0.02, 0.8, (0.005, 0.035)),  # 3% width - should pass
+            (0.02, 0.8, (0.0, 0.04)),     # 4% width - at threshold
+            (0.02, 0.8, (-0.005, 0.045)), # 5% width - should fail
+            (0.02, 0.8, (-0.01, 0.05)),   # 6% width - should fail
+        ]
+        
+        bull_regime = {'current_regime': 'bull_trend'}
+        
+        passed_count = 0
+        failed_count = 0
+        
+        for prediction, confidence, interval in test_cases:
+            width_pct = (interval[1] - interval[0]) * 100
+            result = filter_obj.filter_prediction(prediction, confidence, interval, bull_regime)
+            
+            if width_pct <= 4.0:
+                # Should pass (intervals ≤ 4%)
+                if result is not None:
+                    passed_count += 1
+                else:
+                    # May fail for other reasons (e.g., includes zero)
+                    pass
+            else:
+                # Should fail (intervals > 4%)
+                assert result is None, f"Wide interval {width_pct:.1f}% should be filtered out"
+                failed_count += 1
+        
+        assert failed_count >= 2, "Wide intervals (>4%) should be filtered out"
+        print(f"✅ Bull market filtering: {failed_count} wide intervals correctly filtered")
+
+
 class TestMAPIEIntegration:
     """Comprehensive tests for MAPIE conformal prediction integration."""
     
