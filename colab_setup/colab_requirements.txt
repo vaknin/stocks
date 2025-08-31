@@ -14,21 +14,25 @@ torchaudio==2.7.1 -f https://download.pytorch.org/whl/torch_stable.html
 # ================================
 # CRITICAL AI MODEL DEPENDENCIES
 # ================================
-# Mamba State Space Models - Direct GitHub wheels to avoid Colab build issues
-# causal-conv1d 1.5.2 with CUDA 12, PyTorch 2.7, Python 3.10, cxx11abiFALSE for Colab
-https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-# mamba-ssm 2.2.5 with CUDA 12, PyTorch 2.7, Python 3.10, cxx11abiFALSE for Colab (VERIFIED WORKING)
-https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+# Mamba State Space Models - Now handled by pre-cached wheels in install script
+# These are cached during build_wheels.sh and installed from local cache
+# causal-conv1d==1.5.2  # Installed from cached wheel 
+# mamba-ssm==2.2.5      # Installed from cached wheel
 
 # Transformer models and acceleration
 transformers==4.44.0
 accelerate==0.34.0
 einops==0.8.0
 
-# TimesFM (Time Series Foundation Model) - PAX version for Python 3.10
-timesfm[pax]==1.2.1
-jax==0.4.23
-jaxlib==0.4.23
+# Hugging Face Hub with CLI support (required by TimesFM)
+huggingface-hub[cli]>=0.23.0
+
+# TimesFM (Time Series Foundation Model) - PyTorch version for Python 3.10
+timesfm==1.3.0
+
+# TimesFM additional dependencies
+wandb>=0.17.5
+scikit-learn>=1.2.2
 
 # ================================
 # TRADING SYSTEM CORE
@@ -42,7 +46,7 @@ pandas==2.3.2
 numpy==2.2.6
 scipy==1.15.3
 
-# Machine learning utilities
+# Machine learning utilities (version updated to satisfy TimesFM requirements)
 scikit-learn==1.5.2
 
 # ================================
@@ -94,9 +98,9 @@ ipywidgets==8.1.3
 tqdm==4.66.5
 
 # ================================
-# OPTIONAL PERFORMANCE ENHANCEMENTS
+# CRITICAL SYSTEM DEPENDENCIES  
 # ================================
-# GPU acceleration for PyTorch operations
+# Build system (required by mamba-ssm and causal-conv1d)
 ninja==1.11.1.1
 
 # Fast JSON processing

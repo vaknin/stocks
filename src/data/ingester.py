@@ -73,7 +73,22 @@ class DataIngester:
                             break
                             
                         # Clean column names and add metadata
-                        data.columns = [col.lower().replace(' ', '_') for col in data.columns]
+                        # Handle yfinance column names properly
+                        column_mapping = {
+                            'Open': 'open',
+                            'High': 'high', 
+                            'Low': 'low',
+                            'Close': 'close',
+                            'Volume': 'volume',
+                            'Dividends': 'dividends',
+                            'Stock Splits': 'stock_splits'
+                        }
+                        
+                        # Rename columns that exist
+                        for old_name, new_name in column_mapping.items():
+                            if old_name in data.columns:
+                                data = data.rename(columns={old_name: new_name})
+                        
                         data['ticker'] = ticker
                         data['interval'] = interval
                         data.index.name = 'timestamp'
@@ -136,7 +151,22 @@ class DataIngester:
                 
                 if not data.empty:
                     # Clean column names and add metadata
-                    data.columns = [col.lower().replace(' ', '_') for col in data.columns]
+                    # Handle yfinance column names properly
+                    column_mapping = {
+                        'Open': 'open',
+                        'High': 'high', 
+                        'Low': 'low',
+                        'Close': 'close',
+                        'Volume': 'volume',
+                        'Dividends': 'dividends',
+                        'Stock Splits': 'stock_splits'
+                    }
+                    
+                    # Rename columns that exist
+                    for old_name, new_name in column_mapping.items():
+                        if old_name in data.columns:
+                            data = data.rename(columns={old_name: new_name})
+                    
                     data['ticker'] = ticker
                     data['interval'] = interval
                     data.index.name = 'timestamp'

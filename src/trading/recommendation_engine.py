@@ -352,7 +352,7 @@ class TradingRecommendationEngine:
             lines.append(f"Market Regime: {market_analysis.market_regime.replace('_', ' ').title()} "
                         f"({market_analysis.regime_confidence:.0%} confidence)")
             
-            return "\\n".join(lines)
+            return "\n".join(lines)
             
         except Exception as e:
             logger.error(f"Error generating portfolio summary: {e}")
@@ -456,7 +456,7 @@ class TradingRecommendationEngine:
             lines.append("Execute trades manually and update portfolio when complete.")
             lines.append("=" * 60)
             
-            return "\\n".join(lines)
+            return "\n".join(lines)
             
         except Exception as e:
             logger.error(f"Error formatting report: {e}")

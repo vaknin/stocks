@@ -9,10 +9,35 @@ from pathlib import Path
 class TradingConfig(BaseSettings):
     """Main configuration for the trading system."""
     
-    # Target stocks (AI/Semiconductor focus)
+    # Target stocks (Diversified across sectors for revenue generation)
     STOCK_TICKERS: List[str] = [
-        "NVDA", "AMD", "ASML", "TSM", "INTC", 
-        "QCOM", "AVGO", "MU", "SMCI", "ARM"
+        # Technology (Semiconductors & Software) - 15 stocks
+        "NVDA", "AMD", "ASML", "TSM", "INTC", "QCOM", "AVGO", "MU", "SMCI", "ARM",
+        "AAPL", "MSFT", "GOOGL", "META", "CRM",
+        
+        # Healthcare & Biotech - 10 stocks  
+        "JNJ", "PFE", "UNH", "ABBV", "TMO", "AMGN", "GILD", "MRNA", "BMY", "LLY",
+        
+        # Financials - 10 stocks
+        "JPM", "BAC", "WFC", "GS", "MS", "V", "MA", "BRK-B", "AXP", "C",
+        
+        # Consumer Discretionary - 10 stocks
+        "AMZN", "TSLA", "HD", "MCD", "SBUX", "NKE", "TGT", "LOW", "DIS", "BKNG",
+        
+        # Consumer Staples - 8 stocks
+        "KO", "PG", "WMT", "PEP", "COST", "CL", "KMB", "GIS",
+        
+        # Energy - 8 stocks
+        "XOM", "CVX", "COP", "SLB", "EOG", "PSX", "VLO", "MPC", 
+        
+        # Utilities (Defensive) - 6 stocks
+        "NEE", "DUK", "SO", "D", "EXC", "SRE",
+        
+        # Industrial - 6 stocks
+        "CAT", "BA", "GE", "UNP", "HON", "MMM",
+        
+        # International & Others - 6 stocks  
+        "SHOP", "SAP", "ADBE", "NFLX", "ORCL", "PYPL"
     ]
     
     # Capital and position sizing
