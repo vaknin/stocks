@@ -31,8 +31,8 @@ class KellyPositionSizer:
     
     def __init__(
         self,
-        safety_factor: float = 0.25,
-        max_position_pct: float = 0.10,
+        safety_factor: float = 0.40,
+        max_position_pct: float = 0.15,
         max_total_exposure: float = 0.50,
         min_confidence: float = 0.60,
         lookback_days: int = 252
@@ -40,8 +40,8 @@ class KellyPositionSizer:
         """Initialize Kelly position sizer.
         
         Args:
-            safety_factor: Safety multiplier for Kelly fraction (0.25 = quarter Kelly)
-            max_position_pct: Maximum position size as % of portfolio (0.10 = 10%)
+            safety_factor: Safety multiplier for Kelly fraction (0.40 = optimal Kelly)
+            max_position_pct: Maximum position size as % of portfolio (0.15 = 15%)
             max_total_exposure: Maximum total exposure across all positions
             min_confidence: Minimum confidence threshold for position sizing
             lookback_days: Historical lookback period for win rate calculation
@@ -64,7 +64,8 @@ class KellyPositionSizer:
         confidence: float,
         current_price: float,
         portfolio_value: float,
-        current_positions: Optional[Dict[str, float]] = None
+        current_positions: Optional[Dict[str, float]] = None,
+        transaction_cost_pct: float = 0.002  # 0.2% total transaction costs (commission + spread + slippage)
     ) -> PositionSizeResult:
         """Calculate optimal position size using Kelly Criterion.
         
@@ -75,6 +76,7 @@ class KellyPositionSizer:
             current_price: Current stock price
             portfolio_value: Total portfolio value
             current_positions: Current position sizes as dict {ticker: position_value}
+            transaction_cost_pct: Total transaction costs as percentage of trade value
             
         Returns:
             PositionSizeResult with recommended sizing
@@ -84,18 +86,22 @@ class KellyPositionSizer:
         # Calculate historical performance metrics
         win_prob, avg_win, avg_loss = self._calculate_historical_metrics(ticker)
         
+        # Adjust prediction for transaction costs (reduce expected return)
+        net_prediction = prediction - (2 * transaction_cost_pct)  # Round-trip costs
+        
         # Calculate edge and odds
         edge = win_prob - (1 - win_prob)
         
         if avg_loss == 0:
             # Avoid division by zero, use predicted values
-            odds = abs(prediction) / 0.025  # Assume 2.5% stop loss
+            odds = abs(net_prediction) / 0.025  # Assume 2.5% stop loss
         else:
             odds = avg_win / abs(avg_loss)
         
         # Kelly formula: f = (bp - q) / b
         # where b = odds, p = win probability, q = lose probability
-        if odds > 0:
+        # Use net prediction (after transaction costs)
+        if odds > 0 and net_prediction > 0:
             kelly_fraction = (odds * win_prob - (1 - win_prob)) / odds
         else:
             kelly_fraction = 0

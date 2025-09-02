@@ -161,9 +161,27 @@ echo "⚠️ Some packages may fail to build wheels - this is normal"
 echo "📊 Progress will be shown every 5 minutes"
 echo ""
 
-# OPTIMIZATION: Pre-cache heaviest PyPI packages first (200+ MB total)
-echo "📦 Pre-building wheels for heaviest packages..."
+# OPTIMIZATION: Pre-cache heaviest PyPI packages first (800+ MB total including NVIDIA)
+echo "📦 Pre-building wheels for heaviest packages (including NVIDIA dependencies)..."
 HEAVY_PACKAGES=(
+    # NVIDIA CUDA packages (saves 800+ MB downloads)
+    "nvidia-cublas-cu12==12.6.4.1"    # 393.1 MB
+    "nvidia-cudnn-cu12==9.5.1.17"     # 571.0 MB  
+    "nvidia-cusparse-cu12==12.5.4.2"  # 216.6 MB
+    "nvidia-nccl-cu12==2.26.2"        # 201.3 MB
+    "nvidia-cufft-cu12==11.3.0.4"     # 200.2 MB
+    "nvidia-cusolver-cu12==11.7.1.2"  # 158.2 MB
+    "nvidia-cusparselt-cu12==0.6.3"   # 156.8 MB
+    "triton==3.3.1"                   # 155.6 MB
+    "nvidia-curand-cu12==10.3.7.77"   # 56.3 MB
+    "nvidia-cuda-nvrtc-cu12==12.6.77" # 23.7 MB
+    "nvidia-nvjitlink-cu12==12.6.85"  # 19.7 MB
+    "nvidia-cuda-cupti-cu12==12.6.80" # 8.9 MB
+    "nvidia-cufile-cu12==1.11.1.6"    # 1.1 MB
+    "nvidia-cuda-runtime-cu12==12.6.77" # 897 KB
+    "nvidia-nvtx-cu12==12.6.77"       # 89 KB
+    
+    # Heavy PyPI packages
     "scipy==1.15.3"           # 37.7 MB
     "scikit-learn==1.5.2"    # 13.3 MB - Required by TimesFM
     "pandas==2.3.2"          # 12.3 MB
@@ -182,13 +200,30 @@ HEAVY_PACKAGES=(
     "utilsforecast>=0.1.10"
 )
 
+# Build NVIDIA packages first (require specific PyTorch index)
+echo "💾 Building NVIDIA CUDA packages (saves 800+ MB)..."
 for package in "${HEAVY_PACKAGES[@]}"; do
-    echo "🔧 Pre-building wheel for $package..."
-    python3 -m pip wheel "$package" --wheel-dir="$TEMP_WHEEL_DIR" \
-        --extra-index-url https://download.pytorch.org/whl/cu121 \
-        --prefer-binary \
-        --find-links "$TEMP_WHEEL_DIR" \
-        --no-build-isolation || echo "⚠️ Failed to pre-build $package - will try in main build"
+    if [[ "$package" == nvidia-* || "$package" == triton* ]]; then
+        echo "🔧 Pre-building NVIDIA wheel for $package..."
+        python3 -m pip wheel "$package" --wheel-dir="$TEMP_WHEEL_DIR" \
+            --extra-index-url https://download.pytorch.org/whl/cu121 \
+            --prefer-binary \
+            --find-links "$TEMP_WHEEL_DIR" \
+            --no-build-isolation || echo "⚠️ Failed to pre-build $package - will try in main build"
+    fi
+done
+
+# Build remaining heavy packages
+echo "📦 Building remaining heavy packages..."
+for package in "${HEAVY_PACKAGES[@]}"; do
+    if [[ "$package" != nvidia-* && "$package" != triton* ]]; then
+        echo "🔧 Pre-building wheel for $package..."
+        python3 -m pip wheel "$package" --wheel-dir="$TEMP_WHEEL_DIR" \
+            --extra-index-url https://download.pytorch.org/whl/cu121 \
+            --prefer-binary \
+            --find-links "$TEMP_WHEEL_DIR" \
+            --no-build-isolation || echo "⚠️ Failed to pre-build $package - will try in main build"
+    fi
 done
 
 echo "✅ Heavy packages pre-cached"

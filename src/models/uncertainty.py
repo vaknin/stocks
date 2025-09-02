@@ -427,34 +427,24 @@ class TradingUncertaintyFilter:
     
     def __init__(
         self,
-        max_interval_width: float = 0.10,
-        confidence_threshold: float = 0.75,
-        min_prediction_magnitude: float = 0.001
+        max_interval_width: float = 0.50,
+        confidence_threshold: float = 0.65,
+        min_prediction_magnitude: float = 0.005
     ):
         """Initialize uncertainty filter for trading signals.
         
         Args:
-            max_interval_width: Maximum prediction interval width (10% - financially realistic)
-            confidence_threshold: Minimum confidence for trade signals
-            min_prediction_magnitude: Minimum prediction magnitude for signals (0.1% - allows small but meaningful moves)
+            max_interval_width: Maximum prediction interval width (50% - realistic for volatile semiconductor stocks)
+            confidence_threshold: Minimum confidence for trade signals (65% - practical threshold)
+            min_prediction_magnitude: Minimum prediction magnitude for signals (0.5% - meaningful trades)
         """
-        # Check if in validation mode - relax thresholds for model testing
-        import os
-        validation_mode = os.environ.get('VALIDATION_MODE', 'false').lower() == 'true'
+        # Set realistic thresholds for financial markets
+        self.max_interval_width = max_interval_width
+        self.confidence_threshold = confidence_threshold
+        self.min_prediction_magnitude = min_prediction_magnitude
         
-        if validation_mode:
-            # Extremely relaxed thresholds for validation
-            self.max_interval_width = 2.0  # 200% - very permissive for test data
-            self.confidence_threshold = 0.1  # 10% - very low confidence requirement
-            self.min_prediction_magnitude = 0.001  # 0.1% - very small magnitude
-            logger.info("⚠️ VALIDATION MODE: Using relaxed uncertainty thresholds for testing")
-            logger.info(f"Validation thresholds: width<{self.max_interval_width:.1%}, conf>{self.confidence_threshold:.1%}")
-        else:
-            self.max_interval_width = max_interval_width
-            self.confidence_threshold = confidence_threshold
-            self.min_prediction_magnitude = min_prediction_magnitude
-            logger.info(f"TradingUncertaintyFilter initialized with thresholds: "
-                       f"width<{max_interval_width:.1%}, conf>{confidence_threshold:.1%}")
+        logger.info(f"TradingUncertaintyFilter initialized with thresholds: "
+                   f"width<{max_interval_width:.1%}, conf>{confidence_threshold:.1%}, min_mag>{min_prediction_magnitude:.1%}")
     
     def filter_trading_signals(
         self,
@@ -596,64 +586,51 @@ class TradingUncertaintyFilter:
             # Calculate relative width as percentage of prediction magnitude
             interval_width = absolute_width / abs(prediction)
         
-        # Check if in validation mode - use relaxed thresholds
-        import os
-        validation_mode = os.environ.get('VALIDATION_MODE', 'false').lower() == 'true'
-        
-        if validation_mode:
-            # Use extremely relaxed thresholds for validation to allow test data through
-            if abs(prediction) < 1e-6:  # Very small prediction - use absolute thresholds
-                max_width_threshold = 1.0  # 1.0 absolute units for very small predictions
-            else:
-                max_width_threshold = 5.0  # 500% relative - very permissive for validation
-            confidence_threshold = 0.05  # 5% - very permissive for validation
-            min_prediction_magnitude = 0.0001  # 0.01% - very permissive
-        elif regime_info:
+        # Apply regime-specific thresholds or defaults
+        if regime_info:
             regime_name = regime_info.get('current_regime', '').lower()
             
-            # Adaptive thresholds based on regime - financially realistic levels
+            # Adaptive thresholds based on regime - realistic for semiconductor stocks
             if regime_name == 'high_volatility':
-                max_width_threshold = 0.30  # 30% during volatile periods (realistic for high vol)
-                confidence_threshold = 0.75   # Reasonable confidence for high volatility
+                max_width_threshold = 0.70  # 70% during volatile periods (semiconductor stocks are highly volatile)
+                confidence_threshold = 0.60   # Lower confidence in volatile times
                 min_prediction_magnitude = self.min_prediction_magnitude
             elif regime_name == 'bear_trend':
-                max_width_threshold = 0.25  # 25% during bear markets (realistic for volatile stocks)
-                confidence_threshold = 0.70   # Reasonable confidence for bear markets
+                max_width_threshold = 0.60  # 60% during bear markets (higher uncertainty)
+                confidence_threshold = 0.55   # Lower confidence in bear markets
                 min_prediction_magnitude = self.min_prediction_magnitude
             elif regime_name == 'bull_trend':
-                max_width_threshold = 0.15  # 15% during bull markets (still volatile stocks)
-                confidence_threshold = 0.70   # Standard confidence
+                max_width_threshold = 0.45  # 45% during bull markets (more predictable)
+                confidence_threshold = 0.65   # Standard confidence
                 min_prediction_magnitude = self.min_prediction_magnitude
             else:  # sideways or unknown
-                max_width_threshold = 0.20  # 20% default (realistic baseline for stocks)
-                confidence_threshold = 0.70   # Reasonable default
+                max_width_threshold = 0.55  # 55% default (realistic for tech stocks)
+                confidence_threshold = 0.60   # Reasonable default
                 min_prediction_magnitude = self.min_prediction_magnitude
         else:
-            # Default thresholds
-            max_width_threshold = self.max_interval_width
-            confidence_threshold = self.confidence_threshold
-            min_prediction_magnitude = self.min_prediction_magnitude
+            # Default thresholds (already set to realistic values)
+            max_width_threshold = self.max_interval_width  # 50%
+            confidence_threshold = self.confidence_threshold  # 65%
+            min_prediction_magnitude = self.min_prediction_magnitude  # 0.5%
         
-        # Apply filters
+        # Apply filters with comprehensive logging for monitoring
+        regime_context = f" (regime: {regime_info.get('current_regime', 'unknown')})" if regime_info else ""
+        
         if interval_width > max_width_threshold:
             if abs(prediction) < 1e-6:  # Very small prediction - log absolute values
-                logger.debug(f"Prediction filtered: interval too wide ({absolute_width:.4f} abs > {max_width_threshold:.4f} abs)")
+                logger.info(f"🚫 MAPIE Filter: interval too wide ({absolute_width:.4f} abs > {max_width_threshold:.4f} abs){regime_context}")
             else:
-                logger.debug(f"Prediction filtered: interval too wide ({interval_width:.1%} > {max_width_threshold:.1%})")
+                logger.info(f"🚫 MAPIE Filter: interval too wide ({interval_width:.1%} > {max_width_threshold:.1%}){regime_context}")
             return None
         
         if confidence < confidence_threshold:
-            logger.debug(f"Prediction filtered: low confidence ({confidence:.1%} < {confidence_threshold:.1%})")
+            logger.info(f"🚫 MAPIE Filter: low confidence ({confidence:.1%} < {confidence_threshold:.1%}){regime_context}")
             return None
         
         if abs(prediction) < min_prediction_magnitude:
-            logger.debug(f"Prediction filtered: magnitude too small ({abs(prediction):.1%} < {min_prediction_magnitude:.1%})")
+            logger.info(f"🚫 MAPIE Filter: magnitude too small ({abs(prediction):.1%} < {min_prediction_magnitude:.1%}){regime_context}")
             return None
         
-        # Note: Removed zero-crossing filter as it's too strict for financial markets
-        # In volatile markets, uncertainty intervals naturally cross zero
-        # This is normal and expected behavior, not a reason to reject signals
-        
-        # All filters passed
-        logger.debug(f"Prediction passed filters: {prediction:.1%} confidence {confidence:.1%}")
+        # All filters passed - log success for monitoring
+        logger.info(f"✅ MAPIE Filter PASSED: {prediction:.1%} return, {confidence:.1%} confidence, {interval_width:.1%} width{regime_context}")
         return prediction

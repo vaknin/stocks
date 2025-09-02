@@ -18,8 +18,7 @@ echo "🔗 Verifying Google Drive connectivity..."
 # Check if drive is mounted
 if [ ! -d "/content/drive" ]; then
     echo "❌ Google Drive not mounted. Attempting to mount..."
-    from google.colab import drive
-    drive.mount('/content/drive')
+    python3 -c "from google.colab import drive; drive.mount('/content/drive')"
 fi
 
 # Check if wheel cache exists
@@ -36,8 +35,7 @@ if ! echo "test" > "$test_file" 2>/dev/null || ! rm "$test_file" 2>/dev/null; th
     echo "🔄 Attempting to remount drive..."
     umount /content/drive 2>/dev/null || true
     sleep 2
-    from google.colab import drive
-    drive.mount('/content/drive', force_remount=True)
+    python3 -c "from google.colab import drive; drive.mount('/content/drive', force_remount=True)"
     sleep 3
 fi
 
@@ -102,49 +100,79 @@ echo ""
 echo "🚀 Installing packages from cached wheels and direct URLs..."
 echo "⏱️ This should take 2-3 minutes..."
 
-# Install PyTorch 2.7.1 from CACHED wheels first (no download!)
-echo "🔥 Installing PyTorch 2.7.1 from cached wheels (saves 800MB+ download)..."
-if ls "$WHEEL_CACHE_DIR"/torch-2.7.1*.whl >/dev/null 2>&1 && \
-   ls "$WHEEL_CACHE_DIR"/torchvision-0.22.1*.whl >/dev/null 2>&1 && \
-   ls "$WHEEL_CACHE_DIR"/torchaudio-2.7.1*.whl >/dev/null 2>&1; then
-    echo "✅ Found PyTorch wheels in cache - installing from cache"
-    python3 -m pip install --no-cache-dir --find-links "$WHEEL_CACHE_DIR" \
-        --prefer-binary --no-index \
-        torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 || {
-        echo "⚠️ Cached wheel install failed - falling back to PyPI"
-        python3 -m pip install --no-cache-dir \
-            torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
-            --extra-index-url https://download.pytorch.org/whl/cu121
-    }
-else
-    echo "⚠️ PyTorch wheels not found in cache - downloading from PyPI"
-    echo "💡 Run build_wheels.sh first to cache PyTorch wheels"
-    python3 -m pip install --no-cache-dir \
-        torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
-        --extra-index-url https://download.pytorch.org/whl/cu121
-fi
+# Function for robust wheel installation with cache-first approach
+install_with_cache_fallback() {
+    local packages="$1"
+    local description="$2"
+    local max_retries=3
+    local retry=0
+    
+    echo "🔥 Installing $description with cache-first strategy (saves bandwidth)..."
+    
+    # STEP 1: Try cache-only installation first (fastest, saves bandwidth)
+    echo "📦 Attempting cache-only installation..."
+    if python3 -m pip install --no-cache-dir \
+        --no-index \
+        --find-links "$WHEEL_CACHE_DIR" \
+        $packages 2>/dev/null; then
+        echo "✅ Successfully installed $description from cache (100% cache hit!)"
+        return 0
+    fi
+    
+    # STEP 2: Cache-only failed, try hybrid approach with retries
+    echo "⚠️ Cache-only failed, trying hybrid approach with PyPI fallback..."
+    
+    while [ $retry -lt $max_retries ]; do
+        # Try cache-preferred hybrid approach
+        if python3 -m pip install --no-cache-dir \
+            --find-links "$WHEEL_CACHE_DIR" \
+            --prefer-binary \
+            --extra-index-url https://download.pytorch.org/whl/cu121 \
+            $packages; then
+            echo "✅ Successfully installed $description (hybrid cache+PyPI)"
+            return 0
+        else
+            retry=$((retry + 1))
+            echo "⚠️ Installation attempt $retry failed for $description"
+            if [ $retry -lt $max_retries ]; then
+                echo "🔄 Retrying in 5 seconds..."
+                sleep 5
+            fi
+        fi
+    done
+    
+    echo "❌ Failed to install $description after $max_retries attempts"
+    return 1
+}
+
+# Install PyTorch 2.7.1 ecosystem with improved caching strategy
+install_with_cache_fallback "torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1" "PyTorch 2.7.1 ecosystem"
 
 # Install critical dependencies required by mamba_ssm FIRST
-echo "📦 Installing mamba_ssm dependencies from cached wheels..."
-python3 -m pip install --no-cache-dir --find-links "$WHEEL_CACHE_DIR" --prefer-binary \
-    ninja==1.11.1.1 \
-    einops==0.8.0 \
-    transformers==4.44.0 || echo "⚠️ Some dependencies may install from PyPI"
+install_with_cache_fallback "ninja==1.11.1.1 einops==0.8.0 transformers==4.44.0" "mamba_ssm dependencies"
 
-# Install from CACHED wheels (mamba-ssm and causal-conv1d) - ULTRA FAST!
-echo "⚡ Installing mamba_ssm and causal-conv1d from cached wheels (no download!)..."
-if [ -f "$WHEEL_CACHE_DIR/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" ] && \
-   [ -f "$WHEEL_CACHE_DIR/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" ]; then
-    echo "✅ Found cached wheels - installing from cache (saves 556.9MB download!)"
-    python3 -m pip install --no-cache-dir --no-deps \
-        "$WHEEL_CACHE_DIR/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" \
-        "$WHEEL_CACHE_DIR/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
-else
-    echo "⚠️ Cached wheels not found - falling back to download (run build_wheels.sh first)"
+# Install mamba_ssm and causal-conv1d with enhanced caching strategy
+echo "⚡ Installing mamba_ssm and causal-conv1d from cached wheels (saves 556.9MB)..."
+
+# Enhanced installation with integrity checks
+install_mamba_packages() {
+    local causal_wheel="$WHEEL_CACHE_DIR/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
+    local mamba_wheel="$WHEEL_CACHE_DIR/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl"
+    
+    # Check if cached wheels exist and are valid
+    if verify_wheel_integrity "$causal_wheel" && verify_wheel_integrity "$mamba_wheel"; then
+        echo "✅ Found valid cached wheels - installing from cache (saves 556.9MB download!)"
+        python3 -m pip install --no-cache-dir --no-deps "$causal_wheel" "$mamba_wheel" && return 0
+    fi
+    
+    # Fallback to direct URLs
+    echo "⚠️ Cached wheels invalid/missing - downloading directly from GitHub"
     python3 -m pip install --no-cache-dir --no-deps \
         https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl \
         https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-fi
+}
+
+install_mamba_packages
 
 # Install remaining packages from cached wheels with fallback to PyPI
 echo "📦 Installing remaining packages from cached wheels..."
@@ -157,76 +185,155 @@ grep -v "^https://github.com/" "$REQUIREMENTS_FILE" | \
     grep -v "^typer" | grep -v "^utilsforecast" \
     > /tmp/requirements_filtered.txt
 
-# Install TimesFM and ALL its dependencies from cached wheels
-echo "🤖 Installing TimesFM and all dependencies from cached wheels..."
-python3 -m pip install --no-cache-dir --find-links "$WHEEL_CACHE_DIR" --prefer-binary \
-    timesfm==1.3.0 \
-    "wandb>=0.17.5" \
-    "scikit-learn>=1.2.2" \
-    "huggingface-hub>=0.23.0" \
-    "absl-py>=1.4.0" \
-    "einshape>=1.0.0" \
-    "typer>=0.12.3" \
-    "utilsforecast>=0.1.10" || echo "⚠️ Some TimesFM dependencies may install from PyPI"
+# Install TimesFM and ALL its dependencies using hybrid approach
+install_with_cache_fallback "timesfm==1.3.0 wandb>=0.17.5 scikit-learn>=1.2.2 huggingface-hub>=0.23.0 absl-py>=1.4.0 einshape>=1.0.0 typer>=0.12.3 utilsforecast>=0.1.10" "TimesFM and dependencies"
 
-# Try installing ALL remaining packages from cached wheels first
-echo "📦 Installing remaining packages prioritizing cached wheels..."
-python3 -m pip install --find-links "$WHEEL_CACHE_DIR" \
-    --prefer-binary --no-cache-dir --no-index \
-    -r /tmp/requirements_filtered.txt || {
-    echo "⚠️ Some packages not found in cache, retrying with PyPI fallback..."
+# Install remaining packages using enhanced cache-first approach
+echo "📦 Installing remaining packages with cache-first strategy..."
+echo "📦 Step 1: Attempting cache-only installation (fastest)..."
+
+# STEP 1: Try cache-only installation for maximum speed
+if python3 -m pip install --no-cache-dir \
+    --no-index \
+    --find-links "$WHEEL_CACHE_DIR" \
+    -r /tmp/requirements_filtered.txt 2>/dev/null; then
+    echo "✅ All remaining packages installed from cache (100% cache efficiency!)"
+else
+    echo "⚠️ Cache-only installation incomplete, using hybrid approach..."
+    
+    # STEP 2: Use hybrid approach with cache preference
     python3 -m pip install --find-links "$WHEEL_CACHE_DIR" \
         --prefer-binary --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cu121 \
-        -r /tmp/requirements_filtered.txt
-}
+        --extra-index-url https://data.pyg.org/whl/torch-2.7.0+cu121.html \
+        -r /tmp/requirements_filtered.txt || {
+        echo "⚠️ Some packages failed to install - trying individual installation..."
+        # Try installing packages one by one for better error handling
+        while IFS= read -r package; do
+            if [ -n "$package" ] && [[ ! "$package" =~ ^# ]]; then
+                echo "🔧 Installing: $package"
+                # Try cache-only first, then hybrid
+                python3 -m pip install --no-cache-dir --no-index --find-links "$WHEEL_CACHE_DIR" "$package" 2>/dev/null || \
+                python3 -m pip install --find-links "$WHEEL_CACHE_DIR" \
+                    --prefer-binary --no-cache-dir \
+                    --extra-index-url https://download.pytorch.org/whl/cu121 \
+                    "$package" || echo "⚠️ Failed to install: $package"
+            fi
+        done < /tmp/requirements_filtered.txt
+    }
+fi
 
+# Enhanced post-installation verification
+echo ""
+echo "🔍 Post-installation verification and statistics..."
+echo "====================================================="
+
+# Count successful cache usage vs PyPI downloads
+CACHED_INSTALLS=0
+PYPI_INSTALLS=0
+
+if [ -f "$PIP_CACHE_DIR/pip.log" ]; then
+    CACHED_INSTALLS=$(grep -c "find-links" "$PIP_CACHE_DIR/pip.log" 2>/dev/null || echo "0")
+fi
+
+echo "📊 Installation Statistics:"
+echo "- Wheel cache used: $WHEEL_CACHE_DIR"
+echo "- Wheels available: $WHEEL_COUNT"
+echo "- Cache strategy: Cache-first with PyPI fallback"
+echo "- Expected cache efficiency: 90%+ (saves 800MB+ downloads)"
+echo "- PyPI downloads: Only for missing wheels or dependencies"
 echo ""
 echo "✅ INSTALLATION COMPLETE!"
 echo "========================"
 
-# Verify key installations
-echo "🔍 Verifying installations..."
+# Enhanced verification with error reporting
+echo "🔍 Verifying installations with detailed reporting..."
 
-python3 -c "
-import sys
-print(f'Python version: {sys.version}')
-print()
-
-packages_to_check = [
-    'torch', 'numpy', 'pandas', 'transformers', 
-    'mamba_ssm', 'causal_conv1d', 'yfinance', 
-    'loguru', 'pydantic'
-]
-
-success_count = 0
-for package in packages_to_check:
+# Function to test package import with detailed error info
+test_package_import() {
+    local package="$1"
+    local import_name="${2:-$package}"
+    
+    python3 -c "
+try:
+    import $import_name
+    print('✅ $package: Successfully imported')
+    # Try to get version if available
     try:
-        __import__(package)
-        print(f'✅ {package}')
-        success_count += 1
-    except ImportError as e:
-        print(f'❌ {package}: {e}')
+        if hasattr($import_name, '__version__'):
+            print('   Version: ' + str($import_name.__version__))
+        elif hasattr($import_name, 'version'):
+            print('   Version: ' + str($import_name.version))
+    except:
+        pass
+except ImportError as e:
+    print('❌ $package: Import failed - ' + str(e))
+except Exception as e:
+    print('⚠️ $package: Import error - ' + str(e))
+" 2>&1
+}
 
-print()
-print(f'✅ Successfully verified {success_count}/{len(packages_to_check)} packages')
+echo "Python version: $(python3 --version)"
+echo ""
 
-if success_count == len(packages_to_check):
-    print('🎉 ALL PACKAGES INSTALLED SUCCESSFULLY!')
-    print('🚀 Your trading system is ready to use!')
-else:
-    print('⚠️ Some packages failed - check the output above')
-"
+# Enhanced package verification
+packages_to_check=(
+    "torch"
+    "numpy"
+    "pandas"
+    "transformers"
+    "mamba_ssm"
+    "causal_conv1d"
+    "yfinance"
+    "loguru"
+    "pydantic"
+    "timesfm"
+    "wandb"
+    "sklearn:scikit-learn"
+)
+
+success_count=0
+total_packages=${#packages_to_check[@]}
+
+echo "Testing package imports:"
+for pkg_spec in "${packages_to_check[@]}"; do
+    if [[ "$pkg_spec" == *":"* ]]; then
+        IFS=':' read -r import_name package_name <<< "$pkg_spec"
+        test_package_import "$package_name" "$import_name"
+    else
+        test_package_import "$pkg_spec"
+    fi
+    
+    # Count successes (simple check)
+    if python3 -c "import ${pkg_spec%:*}" 2>/dev/null; then
+        ((success_count++))
+    fi
+done
 
 echo ""
-echo "📊 ULTRA-FAST Installation Statistics:"
+echo "=== FINAL VERIFICATION RESULTS ==="
+echo "✅ Successfully verified: $success_count/$total_packages packages"
+
+if [ "$success_count" -eq "$total_packages" ]; then
+    echo "🎉 ALL PACKAGES INSTALLED SUCCESSFULLY!"
+    echo "🚀 Your trading system is ready to use!"
+    echo "✨ Cached wheel strategy working optimally!"
+else
+    echo "⚠️ Some packages failed verification - check the detailed output above"
+    echo "💡 Consider running build_wheels.sh to refresh the cache"
+fi
+
+echo ""
+echo "📊 OPTIMIZED Installation Statistics:"
 echo "- Wheel cache used: $WHEEL_CACHE_DIR"
 echo "- Wheels available: $WHEEL_COUNT"
-echo "- PyTorch + NVIDIA wheels cached: 800+ MB saved from local cache!"
-echo "- GitHub wheels cached: 556.9MB saved from local cache!"
-echo "- Heavy packages cached: 200+ MB saved from local cache!"
-echo "- Total bandwidth saved: ~1.5GB+ per installation!"
-echo "- Installation time: 30-60 seconds (vs 5-10 minutes without cache)"
-echo "- Speed improvement: ~10x faster than downloading everything!"
+echo "- Strategy: Hybrid cache-first with PyPI fallback"
+echo "- PyTorch ecosystem: Prioritized from cache (saves 800+ MB when available)"
+echo "- GitHub wheels: Direct cache access (saves 556.9MB when available)"
+echo "- Heavy packages: Cache-first installation (saves 200+ MB when available)"
+echo "- Network efficiency: Minimized downloads through intelligent caching"
+echo "- Reliability: Robust fallback ensures successful installation"
+echo "- Installation time: 2-5 minutes (adaptive based on cache effectiveness)"
 echo ""
-echo "💡 To rebuild the wheel cache, run: bash build_wheels.sh"
+echo "💡 To rebuild/refresh the wheel cache, run: bash build_wheels.sh"
+echo "🔧 This hybrid approach ensures maximum cache utilization with reliability!"

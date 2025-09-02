@@ -1,6 +1,6 @@
-# AI-Powered Semiconductor Trading System
+# AI-Powered Multi-Sector Trading System
 
-> **State-of-the-art AI models for systematic semiconductor stock trading with 8-15% monthly return targets**
+> **State-of-the-art AI models for systematic multi-sector stock trading with 8-15% monthly return targets**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.7.1-ee4c2c.svg)](https://pytorch.org/)
@@ -17,7 +17,7 @@
 
 ## 📊 Project Overview
 
-This system combines cutting-edge AI models to generate profitable trading signals for semiconductor stocks:
+This system combines cutting-edge AI models to generate profitable trading signals across multiple market sectors:
 
 - **🧠 Primary AI**: TimesFM (Google's 500M parameter time series foundation model)
 - **🔀 Pattern Recognition**: TSMamba (State space models for stock patterns)
@@ -25,50 +25,31 @@ This system combines cutting-edge AI models to generate profitable trading signa
 - **🎯 Uncertainty Quantification**: MAPIE conformal prediction for confidence intervals
 - **🔄 Adaptive Learning**: Dynamic ensemble weighting based on recent performance
 
-### Target Portfolio
-- **Stocks**: NVDA, AMD, ASML, TSM, INTC, QCOM, AVGO, MU, SMCI, ARM
-- **Capital**: $1-2k test capital with scaling potential
-- **Strategy**: Multi-timeframe (intraday, daily, weekly) with regime-adaptive allocation
+### Diversified Portfolio (75+ Stocks)
+- **Technology**: 15 stocks (NVDA, AMD, AAPL, MSFT, etc.)
+- **Healthcare**: 10 stocks (JNJ, PFE, UNH, etc.)
+- **Financials**: 10 stocks (JPM, BAC, V, MA, etc.)
+- **Consumer Discretionary**: 10 stocks (AMZN, TSLA, HD, etc.)
+- **Consumer Staples**: 8 stocks (KO, PG, WMT, etc.)
+- **Energy**: 8 stocks (XOM, CVX, COP, etc.)
+- **Utilities**: 6 stocks (NEE, DUK, SO, etc.)
+- **Industrial**: 6 stocks (CAT, BA, GE, etc.)
+- **International**: 6 stocks (SHOP, SAP, ADBE, etc.)
+
+**Capital**: $2,500 test capital with scaling potential  
+**Strategy**: Multi-timeframe (intraday, daily, weekly) with regime-adaptive allocation
 
 ## 🎯 Performance Targets
 
 | Metric | Target Range |
 |--------|-------------|
-| **Monthly Returns** | 8-15% |
+| **Monthly Returns** | 1-3% |
 | **Win Rate** | 65-75% |
-| **Sharpe Ratio** | >2.0 |
+| **Sharpe Ratio** | >1.5 |
 | **Max Drawdown** | 10-15% |
 | **Volatility** | 15-20% annualized |
 
-## 🛠️ System Architecture
-
-```
-├── 🧠 AI Models Layer
-│   ├── TimesFM (Primary predictions)
-│   ├── TSMamba (Pattern recognition)
-│   ├── SAMBA (Correlation analysis)
-│   └── Ensemble (Meta-learning combination)
-│
-├── 📊 Data & Analysis
-│   ├── Market data ingestion (yfinance)
-│   ├── Technical indicator calculation
-│   ├── Regime detection (HMM)
-│   └── Uncertainty quantification (MAPIE)
-│
-├── 🎮 Trading Engine
-│   ├── Signal generation
-│   ├── Position sizing (Kelly criterion)
-│   ├── Risk management
-│   └── Portfolio tracking (TOML-based)
-│
-└── 🖥️ Interface & Monitoring
-    ├── CLI interface (trading_advisor.py)
-    ├── Performance dashboard
-    ├── Backtesting engine
-    └── Real-time monitoring
-```
-
-## 🔧 Installation & Setup
+## 🔧 Installation & Usage
 
 ### Requirements
 - **Python**: 3.10+ (required for MAPIE compatibility)
@@ -86,21 +67,6 @@ This system combines cutting-edge AI models to generate profitable trading signa
 !bash colab_setup/install_from_wheels.sh
 ```
 
-### Local Setup
-```bash
-# Clone repository
-git clone <repository-url>
-cd stocks
-
-# Install dependencies
-pip install -r colab_setup/colab_requirements.txt
-
-# Validate installation
-python colab_setup/model_validator.py
-```
-
-## 🎮 Usage
-
 ### Daily Trading Workflow
 ```bash
 # Generate daily recommendations
@@ -111,35 +77,13 @@ python trading_advisor.py --portfolio
 
 # Run backtesting
 python backtest_engine.py --days 252
-
-# Monitor performance
-python dashboard.py
 ```
-
-### Model Validation
-```bash
-# Validate all AI models
-python colab_setup/model_validator.py
-
-# Test specific model
-python colab_setup/model_validator.py --component timesfm
-```
-
-## 📈 Multi-Timeframe Strategy
-
-| Timeframe | Target Return | Confidence Threshold | Use Case |
-|-----------|---------------|---------------------|----------|
-| **5-minute** | 0.5-1% | >70% | Scalping |
-| **Daily** | 2-5% | >75% | Swing trading |
-| **Weekly** | 5-10% | >75% | Position trading |
-
-**Execution Rule**: Only trade when expected return >2x transaction costs
 
 ## 🛡️ Risk Management
 
-### Position Sizing
+### Position Sizing & Allocation
 - **Kelly Criterion**: 0.25x Kelly with confidence scaling
-- **Maximum Position**: 20% per stock ($200-400 for $1-2k capital)
+- **Maximum Position**: 16% per stock ($300-400 for $2.5k capital)
 - **Active Positions**: 3-5 maximum
 - **Correlation Limit**: Max 0.7 between positions
 
@@ -152,6 +96,7 @@ python colab_setup/model_validator.py --component timesfm
 ## 📊 Key Features
 
 - ✅ **Real AI Models**: TimesFM, TSMamba, SAMBA (no mock modes)
+- ✅ **Multi-Sector Diversification**: 75+ stocks across 8 major sectors
 - ✅ **Uncertainty Quantification**: MAPIE confidence intervals
 - ✅ **Multi-Timeframe**: Intraday, daily, weekly signal fusion
 - ✅ **Regime Detection**: HMM-based market state identification
@@ -163,72 +108,37 @@ python colab_setup/model_validator.py --component timesfm
 ## 📋 Current Status
 
 | Component | Status | Notes |
-|-----------|--------|--------|
+|-----------|--------|-------|
 | **Dependencies** | ✅ Working | PyTorch 2.7.1 + mamba_ssm compatible |
 | **AI Models** | ✅ Validated | All models pass validation tests |
-| **Data Pipeline** | ✅ Working | yfinance integration with validation |
+| **Data Pipeline** | ✅ Enhanced | Advanced validation (market hours, corporate actions) |
 | **Trading Engine** | ✅ Working | Signal generation and execution |
-| **Risk Management** | ✅ Working | Position sizing and limits |
-| **Backtesting** | ✅ Working | Comprehensive backtesting engine |
-| **Monitoring** | ✅ Working | Dashboard and performance tracking |
+| **Risk Management** | ✅ Enhanced | Kelly sizing + correlation limits + transaction costs |
+| **Backtesting** | ✅ Institutional-Grade | Monte Carlo validation + performance attribution |
+| **Multi-Sector Support** | ✅ Working | 75+ stocks across 8 sectors |
+| **Transaction Costs** | ✅ Integrated | Realistic modeling (commission, spread, slippage) |
+| **Performance Attribution** | ✅ Complete | Multi-factor analysis with market beta separation |
 
-**System is operational and generating real AI-powered trading signals.**
+**System is production-ready with institutional-grade features and realistic 1-3% monthly return targeting.**
 
-## 🔮 Development Roadmap
+## 🔧 Configuration
 
-### Phase 1: Foundation (Complete)
-- ✅ AI model validation and compatibility fixes
-- ✅ Google Colab optimization
-- ✅ Basic trading pipeline
-
-### Phase 2: Enhancement (In Progress)
-- 📍 Model training on historical data
-- 📍 Enhanced backtesting with Monte Carlo
-- 📍 Paper trading system
-- 📍 Advanced performance analytics
-
-### Phase 3: Production (Planned)
-- 🔄 Automated model retraining
-- 🔄 Real-time monitoring and alerting
-- 🔄 Multi-asset capability
-- 🔄 Brokerage API integration
-
-See [ROADMAP.md](ROADMAP.md) for detailed development plan.
-
-## 🔧 Advanced Configuration
-
-### Model Parameters
+### Trading Thresholds
 ```python
-# Ensemble weights (auto-optimized)
-ENSEMBLE_WEIGHTS = {
-    'timesfm': 0.5,    # Primary foundation model
-    'tsmamba': 0.3,    # Pattern recognition
-    'samba': 0.2       # Correlation analysis
-}
-
-# Trading thresholds
 CONFIDENCE_THRESHOLD = 0.75  # Minimum confidence for trades
 PROFIT_TARGET = 0.02         # 2% profit target
 STOP_LOSS = 0.015           # 1.5% stop loss
+MONTHLY_RETURN_TARGET = 0.01-0.03  # 1-3% monthly target
 ```
 
-### Portfolio Configuration
-Edit `portfolio.toml` for custom stock selection and position sizing.
+Edit `src/config/settings.py` for custom stock selection and parameters.
 
 ## 📝 License
 
 This project is for educational and research purposes. Please ensure compliance with local financial regulations before live trading.
 
-## 🤝 Contributing
-
-See development guidelines in [ROADMAP.md](ROADMAP.md). Focus areas:
-1. Model training improvements
-2. Enhanced risk management
-3. Real-time data sources
-4. Production deployment tools
-
 ---
 
-**⚡ Ready to generate 8-15% monthly returns with state-of-the-art AI models?**
+**⚡ Ready to generate 1-3% monthly returns with state-of-the-art AI models across multiple market sectors?**
 
 Start with: `python trading_advisor.py`

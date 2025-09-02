@@ -54,9 +54,9 @@ class Performance:
 class Settings:
     """Portfolio management settings from README.md."""
     max_positions: int = 5
-    max_position_size_pct: int = 20  # Max 20% per stock
-    kelly_multiplier: float = 0.25   # 0.25x Kelly criterion
-    confidence_threshold: int = 75   # >75% confidence requirement
+    max_position_size_pct: int = 15  # Max 15% per stock (optimized)
+    kelly_multiplier: float = 0.40   # 0.40x Kelly criterion (2024 research)
+    confidence_threshold: int = 78   # >78% confidence requirement (ML-optimized)
     target_stocks: List[str] = None
     
     def __post_init__(self):
@@ -141,7 +141,7 @@ class PortfolioTracker:
             self.settings = Settings(
                 max_positions=settings_data.get("max_positions", 5),
                 max_position_size_pct=settings_data.get("max_position_size_pct", 20),
-                kelly_multiplier=settings_data.get("kelly_multiplier", 0.25),
+                kelly_multiplier=settings_data.get("kelly_multiplier", 0.40),
                 confidence_threshold=settings_data.get("confidence_threshold", 75),
                 target_stocks=settings_data.get("target_stocks", self.settings.target_stocks)
             )

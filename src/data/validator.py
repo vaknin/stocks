@@ -69,6 +69,11 @@ class DataValidator:
         # Calculate overall data quality score
         validation_result['data_quality_score'] = self._calculate_quality_score(validation_result)
         
+        # Additional real-time data validation checks
+        self._validate_market_hours(df, validation_result)
+        self._validate_corporate_actions(df, validation_result)
+        self._check_data_freshness(df, validation_result)
+        
         # Add test compatibility keys - use list by default for structure test
         validation_result['validation_errors'] = validation_result['errors']
         validation_result['record_count'] = len(df)
@@ -487,6 +492,113 @@ class DataValidator:
         
         logger.info(f"Cleaned outliers using method '{method}' for columns: {columns}")
         return df_clean
+    
+    def _validate_market_hours(self, df: pd.DataFrame, result: Dict) -> None:
+        """Validate that data aligns with market hours and trading days."""
+        if not isinstance(df.index, pd.DatetimeIndex):
+            return
+        
+        # Check for data points during weekends
+        weekend_data = df[df.index.weekday >= 5]  # Saturday=5, Sunday=6
+        if len(weekend_data) > 0:
+            result['warnings'].append(f"Found {len(weekend_data)} weekend data points")
+        
+        # Check for data during typical market holidays (simplified)
+        # US market holidays - basic check for common dates
+        potential_holidays = []
+        for year in df.index.year.unique():
+            # New Year's Day, July 4th, Christmas Day (simplified)
+            holidays = [
+                f"{year}-01-01",  # New Year's Day
+                f"{year}-07-04",  # Independence Day  
+                f"{year}-12-25"   # Christmas Day
+            ]
+            potential_holidays.extend(holidays)
+        
+        holiday_data_count = 0
+        for holiday in potential_holidays:
+            try:
+                holiday_date = pd.to_datetime(holiday)
+                if holiday_date in df.index:
+                    holiday_data_count += 1
+            except:
+                continue
+        
+        if holiday_data_count > 0:
+            result['warnings'].append(f"Found data on {holiday_data_count} potential market holidays")
+        
+        result['statistics']['market_hours'] = {
+            'weekend_data_points': len(weekend_data),
+            'potential_holiday_data': holiday_data_count,
+            'trading_days': len(df[df.index.weekday < 5])  # Weekdays only
+        }
+    
+    def _validate_corporate_actions(self, df: pd.DataFrame, result: Dict) -> None:
+        """Detect potential corporate actions (splits, dividends) in the data."""
+        if 'close' not in df.columns or len(df) < 10:
+            return
+        
+        # Calculate overnight price gaps (potential splits or dividends)
+        overnight_gaps = []
+        for i in range(1, len(df)):
+            prev_close = df['close'].iloc[i-1]
+            current_open = df['open'].iloc[i] if 'open' in df.columns else df['close'].iloc[i]
+            
+            if prev_close > 0:
+                gap_ratio = (current_open - prev_close) / prev_close
+                
+                # Check for potential stock splits (large negative gaps)
+                if gap_ratio < -0.3:  # 30% overnight drop could be a split
+                    overnight_gaps.append({
+                        'date': df.index[i],
+                        'gap_ratio': gap_ratio,
+                        'type': 'potential_split'
+                    })
+                # Check for potential special dividends (moderate negative gaps)
+                elif gap_ratio < -0.05:  # 5% drop could be dividend
+                    overnight_gaps.append({
+                        'date': df.index[i],
+                        'gap_ratio': gap_ratio,
+                        'type': 'potential_dividend'
+                    })
+        
+        if overnight_gaps:
+            result['warnings'].append(f"Detected {len(overnight_gaps)} potential corporate actions")
+            
+            # Log significant gaps
+            for gap in overnight_gaps[:5]:  # Show first 5
+                result['warnings'].append(
+                    f"{gap['type']} on {gap['date']}: {gap['gap_ratio']:.2%} gap"
+                )
+        
+        result['statistics']['corporate_actions'] = {
+            'potential_actions': len(overnight_gaps),
+            'potential_splits': len([g for g in overnight_gaps if g['type'] == 'potential_split']),
+            'potential_dividends': len([g for g in overnight_gaps if g['type'] == 'potential_dividend'])
+        }
+    
+    def _check_data_freshness(self, df: pd.DataFrame, result: Dict) -> None:
+        """Check how recent the data is."""
+        if df.empty or not isinstance(df.index, pd.DatetimeIndex):
+            return
+        
+        latest_data_date = df.index.max()
+        current_date = pd.Timestamp.now()
+        days_old = (current_date - latest_data_date).days
+        
+        # Warn if data is more than 2 days old for daily data
+        if days_old > 2:
+            result['warnings'].append(f"Data is {days_old} days old (last update: {latest_data_date.date()})")
+        
+        # Check if we're missing recent trading days
+        if days_old > 5:  # More than a week old
+            result['warnings'].append("Data may be significantly outdated for live trading")
+        
+        result['statistics']['data_freshness'] = {
+            'latest_date': str(latest_data_date.date()),
+            'days_old': days_old,
+            'is_fresh': days_old <= 2
+        }
     
     def generate_quality_report(self, validation_results: List[Dict]) -> pd.DataFrame:
         """Generate a comprehensive data quality report.

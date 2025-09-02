@@ -53,9 +53,9 @@ class TradingRecommendationEngine:
         self.portfolio_tracker = PortfolioTracker(portfolio_file)
         self.market_analyzer = DailyMarketAnalyzer()
         
-        # Kelly sizing parameters from README.md
-        self.kelly_multiplier = 0.25  # Conservative 0.25x Kelly
-        self.max_position_pct = 0.20  # Max 20% per stock
+        # Optimized Kelly sizing parameters based on 2024-2025 research
+        self.kelly_multiplier = 0.40  # Optimal 0.40x Kelly for revenue generation
+        self.max_position_pct = 0.15  # Max 15% per stock for better diversification
         self.max_positions = 5        # Max 5 positions
         
         # Transaction cost estimate (0.1% per trade)

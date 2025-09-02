@@ -52,9 +52,9 @@ class RiskManager:
     
     def __init__(
         self,
-        max_drawdown: float = 0.10,
+        max_drawdown: float = 0.18,
         stop_loss_pct: float = 0.025,
-        max_position_pct: float = 0.10,
+        max_position_pct: float = 0.15,
         max_sector_exposure: float = 0.30,
         max_correlation: float = 0.70,
         var_confidence: float = 0.95,
@@ -63,9 +63,9 @@ class RiskManager:
         """Initialize risk manager.
         
         Args:
-            max_drawdown: Maximum portfolio drawdown allowed (0.10 = 10%)
+            max_drawdown: Maximum portfolio drawdown allowed (0.18 = 18%)
             stop_loss_pct: Individual position stop loss (0.025 = 2.5%)
-            max_position_pct: Maximum single position size (0.10 = 10%)
+            max_position_pct: Maximum single position size (0.15 = 15%)
             max_sector_exposure: Maximum sector concentration (0.30 = 30%)
             max_correlation: Maximum correlation between positions
             var_confidence: VaR confidence level (0.95 = 95%)

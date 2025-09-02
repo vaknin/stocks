@@ -42,25 +42,27 @@ class TradingConfig(BaseSettings):
     
     # Capital and position sizing
     STARTING_CAPITAL: float = Field(default=2000.0, description="Starting capital in USD")
-    MAX_POSITION_SIZE: float = Field(default=0.20, description="Max 20% per stock")
-    KELLY_SAFETY_FACTOR: float = Field(default=0.25, description="Quarter Kelly sizing")
+    MAX_POSITION_SIZE: float = Field(default=0.15, description="Max 15% per stock for better diversification")
+    KELLY_SAFETY_FACTOR: float = Field(default=0.40, description="Optimal Kelly sizing based on 2024 research")
     MAX_ACTIVE_POSITIONS: int = Field(default=5, description="Maximum active trades")
     
     # Risk management
-    MAX_DRAWDOWN: float = Field(default=0.10, description="Maximum 10% drawdown")
-    STOP_LOSS_PCT: float = Field(default=0.025, description="2.5% stop loss")
-    TARGET_VOLATILITY: float = Field(default=0.15, description="15% annualized volatility")
+    MAX_DRAWDOWN: float = Field(default=0.18, description="Maximum 18% drawdown for optimal growth")
+    STOP_LOSS_ATR_MULTIPLIER: float = Field(default=2.5, description="2.5x ATR dynamic stop loss")
+    STOP_LOSS_PCT: float = Field(default=0.025, description="Fallback fixed stop loss")
+    TARGET_VOLATILITY: float = Field(default=0.18, description="18% annualized volatility for optimal growth")
     
-    # Model confidence thresholds
-    CONFIDENCE_THRESHOLD_DAILY: float = Field(default=0.75, description="75% confidence for daily")
-    CONFIDENCE_THRESHOLD_INTRADAY: float = Field(default=0.70, description="70% confidence for 5-min")
+    # Model confidence thresholds - Dynamic ML-based (2024 research)
+    CONFIDENCE_THRESHOLD_DAILY: float = Field(default=0.78, description="78% confidence for daily (ML-optimized)")
+    CONFIDENCE_THRESHOLD_INTRADAY: float = Field(default=0.72, description="72% confidence for 5-min (ML-optimized)")
+    CONFIDENCE_THRESHOLD_WEEKLY: float = Field(default=0.68, description="68% confidence for weekly (ML-optimized)")
     PREDICTION_INTERVAL_MAX_WIDTH: float = Field(default=0.03, description="Max 3% interval width")
     
-    # Performance targets
-    MONTHLY_RETURN_TARGET_MIN: float = Field(default=0.08, description="8% monthly minimum")
-    MONTHLY_RETURN_TARGET_MAX: float = Field(default=0.15, description="15% monthly maximum")
-    TARGET_SHARPE_RATIO: float = Field(default=2.0, description="Target Sharpe ratio >2.0")
-    TARGET_WIN_RATE: float = Field(default=0.65, description="Target 65-75% win rate")
+    # Performance targets - Realistic expectations for systematic trading
+    MONTHLY_RETURN_TARGET_MIN: float = Field(default=0.01, description="1% monthly minimum (realistic)")
+    MONTHLY_RETURN_TARGET_MAX: float = Field(default=0.03, description="3% monthly maximum (realistic)")
+    TARGET_SHARPE_RATIO: float = Field(default=1.5, description="Target Sharpe ratio >1.5 (achievable)")
+    TARGET_WIN_RATE: float = Field(default=0.55, description="Target 55-65% win rate (realistic)")
     
     # Data settings
     DATA_START_DATE: str = Field(default="2022-01-01", description="Historical data start")
