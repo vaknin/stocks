@@ -12,7 +12,11 @@ from loguru import logger
 import yfinance as yf
 
 # Import our existing models
-from src.models.ensemble import MetaLearningEnsemble
+try:
+    from src.models.ensemble import MetaLearningEnsemble
+except ImportError as e:
+    # Re-raise with more detailed error info
+    raise ImportError(f"Failed to import MetaLearningEnsemble: {e}. Check if all dependencies are installed and paths are correct.") from e
 from src.models.regime_detector import HiddenMarkovRegimeDetector
 from src.models.uncertainty import TradingUncertaintyFilter
 from src.data.ingester import DataIngester

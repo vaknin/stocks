@@ -1,0 +1,50 @@
+[portfolio]
+total_value = 2000.0
+last_updated = "2025-09-02"
+cash_reserve = 2000.0
+
+[positions]
+
+[performance]
+total_return_pct = 0.0
+monthly_return_pct = 0.0
+win_rate_pct = 0.0
+trades_won = 0
+trades_total = 0
+sharpe_ratio = 0.0
+max_drawdown_pct = 0.0
+
+[settings]
+max_positions = 5
+max_position_size_pct = 15
+kelly_multiplier = 0.40
+confidence_threshold = 78
+target_stocks = [
+    # Technology (Semiconductors & Software) - 15 stocks
+    "NVDA", "AMD", "ASML", "TSM", "INTC", "QCOM", "AVGO", "MU", "SMCI", "ARM",
+    "AAPL", "MSFT", "GOOGL", "META", "CRM",
+    
+    # Healthcare & Biotech - 10 stocks  
+    "JNJ", "PFE", "UNH", "ABBV", "TMO", "AMGN", "GILD", "MRNA", "BMY", "LLY",
+    
+    # Financials - 10 stocks
+    "JPM", "BAC", "WFC", "GS", "MS", "V", "MA", "BRK-B", "AXP", "C",
+    
+    # Consumer Discretionary - 10 stocks
+    "AMZN", "TSLA", "HD", "MCD", "SBUX", "NKE", "TGT", "LOW", "DIS", "BKNG",
+    
+    # Consumer Staples - 8 stocks
+    "KO", "PG", "WMT", "PEP", "COST", "CL", "KMB", "GIS",
+    
+    # Energy - 8 stocks
+    "XOM", "CVX", "COP", "SLB", "EOG", "PSX", "VLO", "MPC", 
+    
+    # Utilities (Defensive) - 6 stocks
+    "NEE", "DUK", "SO", "D", "EXC", "SRE",
+    
+    # Industrial - 6 stocks
+    "CAT", "BA", "GE", "UNP", "HON", "MMM",
+    
+    # International & Others - 6 stocks  
+    "SHOP", "SAP", "ADBE", "NFLX", "ORCL", "PYPL"
+  ]
