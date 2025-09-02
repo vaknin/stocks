@@ -290,6 +290,8 @@ class TimesFMPredictor:
             else:
                 logger.warning(f"Insufficient data for {ticker}: {len(df)} < {min_required}")
                 return None
+        
+        return self._predict_with_current_settings(df, ticker)
     
     def _calculate_volatility_threshold(self, horizon: int, ticker: str, interval_width: float) -> float:
         """Calculate volatility-adaptive threshold for interval width."""
@@ -323,13 +325,8 @@ class TimesFMPredictor:
         normal_vol_estimate = 0.20  # 20% annualized for normal stocks
         
         return high_vol_estimate if self._is_high_volatility_stock(ticker) else normal_vol_estimate
-                finally:
-                    self.context_len = original_context  # Ensure restoration
-            else:
-                logger.warning(f"Insufficient data for {ticker}: {len(df)} < {min_required}")
-                return self._mock_prediction(ticker, len(self.horizon_len))
-        
-        return self._predict_with_current_settings(df, ticker)
+    
+
     
     def _predict_with_current_settings(self, df: pd.DataFrame, ticker: str) -> Dict[str, Any]:
         """Perform prediction with current context length settings."""
