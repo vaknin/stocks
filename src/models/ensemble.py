@@ -11,6 +11,7 @@ from pathlib import Path
 from .timesfm_predictor import TimesFMPredictor
 from .tsmamba_predictor import TSMambaPredictor
 from .samba_predictor import SAMBAPredictor
+from .tft_predictor import TFTPredictor
 from .uncertainty import ConformalPredictor
 from .regime_detector import HiddenMarkovRegimeDetector, MarketRegime
 from .neural_meta_learner import NeuralMetaLearner
@@ -19,14 +20,15 @@ from ..features.meta_feature_extractor import MetaFeatureExtractor
 from ..config.settings import config
 
 class MetaLearningEnsemble:
-    """Dynamic ensemble of TimesFM + TSMamba models with adaptive weighting."""
+    """Dynamic ensemble of TimesFM + TSMamba + SAMBA + TFT models with adaptive weighting."""
     
     def __init__(
         self,
         horizon_len: Union[int, List[int]] = [1, 5, 20],
-        timesfm_weight: float = 0.5,
-        tsmamba_weight: float = 0.3,
+        timesfm_weight: float = 0.4,
+        tsmamba_weight: float = 0.25,
         samba_weight: float = 0.2,
+        tft_weight: float = 0.15,
         uncertainty_alpha: float = 0.1,
         performance_window: int = 50,
         device: str = "auto",
@@ -41,6 +43,7 @@ class MetaLearningEnsemble:
             timesfm_weight: Initial weight for TimesFM model
             tsmamba_weight: Initial weight for TSMamba model
             samba_weight: Initial weight for SAMBA model
+            tft_weight: Initial weight for TFT model
             uncertainty_alpha: Alpha for uncertainty quantification
             performance_window: Window for tracking model performance
             device: Device for computation
@@ -72,6 +75,11 @@ class MetaLearningEnsemble:
             device=device
         )
         
+        self.tft = TFTPredictor(
+            horizon_len=self.horizon_len,
+            device=device
+        )
+        
         # Initialize regime detector for market adaptation
         self.regime_detector = HiddenMarkovRegimeDetector()
         
@@ -93,21 +101,24 @@ class MetaLearningEnsemble:
         # Current regime adaptive alpha
         self.current_regime_alpha = uncertainty_alpha
         
-        # Model weights (can be dynamic)
+        # Model weights (can be dynamic) - now 4 models
         self.weights = {
             'timesfm': timesfm_weight,
             'tsmamba': tsmamba_weight,
-            'samba': samba_weight
+            'samba': samba_weight,
+            'tft': tft_weight
         }
         
         # Normalize weights
         total_weight = sum(self.weights.values())
         self.weights = {k: v/total_weight for k, v in self.weights.items()}
         
-        # Performance tracking
+        # Performance tracking (now 4 models)
         self.performance_history = {
             'timesfm': [],
             'tsmamba': [],
+            'samba': [],
+            'tft': [],
             'ensemble': []
         }
         
@@ -137,12 +148,12 @@ class MetaLearningEnsemble:
                 dummy_features = self.feature_extractor._get_default_combined_features()
                 meta_feature_dim = len(dummy_features)
                 
-                # Initialize neural meta-learner
+                # Initialize neural meta-learner (now 4 models: TimesFM, TSMamba, SAMBA, TFT)
                 self.neural_meta_learner = NeuralMetaLearner(
                     meta_feature_dim=meta_feature_dim,
                     hidden_dim=128,
                     horizons=self.horizon_len,
-                    n_models=3,
+                    n_models=4,
                     attention_heads=8,
                     dropout=0.15,
                     device=device
@@ -415,6 +426,7 @@ class MetaLearningEnsemble:
                 timesfm_pred = self.timesfm.predict(primary_df, ticker, return_confidence)
                 tsmamba_pred = self.tsmamba.predict(primary_df, ticker, return_confidence)
                 samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
+                tft_pred = self.tft.predict(primary_df, ticker, return_confidence)
                 
             except Exception as e:
                 if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
@@ -426,6 +438,7 @@ class MetaLearningEnsemble:
                     timesfm_pred = self.timesfm.predict(primary_df, ticker, return_confidence)
                     tsmamba_pred = self.tsmamba.predict(primary_df, ticker, return_confidence)
                     samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
+                    tft_pred = self.tft.predict(primary_df, ticker, return_confidence)
                 else:
                     raise e
             
@@ -435,11 +448,13 @@ class MetaLearningEnsemble:
             for horizon in self.horizon_len:
                 horizon_key = f"horizon_{horizon}"
                 
-                if horizon_key in timesfm_pred and horizon_key in tsmamba_pred and horizon_key in samba_pred:
-                    # Extract individual predictions
+                if (horizon_key in timesfm_pred and horizon_key in tsmamba_pred and 
+                    horizon_key in samba_pred and horizon_key in tft_pred):
+                    # Extract individual predictions (4 models)
                     timesfm_val = timesfm_pred[horizon_key]['prediction']
                     tsmamba_val = tsmamba_pred[horizon_key]['prediction']
                     samba_val = samba_pred[horizon_key]['prediction']
+                    tft_val = tft_pred[horizon_key]['prediction']
                     
                     # Apply regime-adaptive weighting
                     adapted_weights = self._adapt_weights_for_regime(
@@ -449,11 +464,12 @@ class MetaLearningEnsemble:
                         horizon=horizon
                     )
                     
-                    # Weighted ensemble prediction with regime adaptation
+                    # Weighted ensemble prediction with regime adaptation (4 models)
                     raw_ensemble_pred = (
                         adapted_weights['timesfm'] * timesfm_val +
                         adapted_weights['tsmamba'] * tsmamba_val +
-                        adapted_weights['samba'] * samba_val
+                        adapted_weights['samba'] * samba_val +
+                        adapted_weights['tft'] * tft_val
                     )
                     
                     # Apply financial sanity checks
@@ -461,28 +477,33 @@ class MetaLearningEnsemble:
                         raw_ensemble_pred, horizon, regime_state, ticker
                     )
                     
-                    # Combine confidence scores
+                    # Combine confidence scores (4 models)
                     timesfm_conf = timesfm_pred[horizon_key].get('confidence', 0.5)
                     tsmamba_conf = tsmamba_pred[horizon_key].get('confidence', 0.5)
                     samba_conf = samba_pred[horizon_key].get('confidence', 0.5)
+                    tft_conf = tft_pred[horizon_key].get('confidence', 0.5)
                     
-                    # Apply regime adaptation to confidence
+                    # Apply regime adaptation to confidence (4 models)
                     base_conf = (
                         adapted_weights['timesfm'] * timesfm_conf +
                         adapted_weights['tsmamba'] * tsmamba_conf +
-                        adapted_weights['samba'] * samba_conf
+                        adapted_weights['samba'] * samba_conf +
+                        adapted_weights['tft'] * tft_conf
                     )
                     
                     # Adjust confidence based on regime uncertainty
                     regime_conf_adjustment = adaptation_factors['confidence_threshold_adjustment']
                     ensemble_conf = max(0.0, min(1.0, base_conf + regime_conf_adjustment))
                     
-                    # Model disagreement as additional uncertainty (3-model disagreement)
+                    # Model disagreement as additional uncertainty (4-model disagreement)
                     disagreement = (
                         abs(timesfm_val - tsmamba_val) + 
-                        abs(timesfm_val - samba_val) + 
-                        abs(tsmamba_val - samba_val)
-                    ) / 3.0
+                        abs(timesfm_val - samba_val) +
+                        abs(timesfm_val - tft_val) +
+                        abs(tsmamba_val - samba_val) +
+                        abs(tsmamba_val - tft_val) +
+                        abs(samba_val - tft_val)
+                    ) / 6.0  # 6 pairwise comparisons for 4 models
                     
                     # MAPIE-enhanced prediction intervals
                     if self.uncertainty_model and self.uncertainty_model.is_fitted:
@@ -523,6 +544,7 @@ class MetaLearningEnsemble:
                             timesfm_interval = timesfm_pred[horizon_key].get('prediction_interval', [timesfm_val-0.005, timesfm_val+0.005])
                             tsmamba_interval = tsmamba_pred[horizon_key].get('prediction_interval', [tsmamba_val-0.005, tsmamba_val+0.005])
                             samba_interval = samba_pred[horizon_key].get('prediction_interval', [samba_val-0.005, samba_val+0.005])
+                            tft_interval = tft_pred[horizon_key].get('prediction_interval', [tft_val-0.005, tft_val+0.005])
                             
                             # Calculate percentage widths with better handling of small values
                             def safe_percentage_width(interval, pred_val):
@@ -539,9 +561,10 @@ class MetaLearningEnsemble:
                             timesfm_width_pct = safe_percentage_width(timesfm_interval, timesfm_val)
                             tsmamba_width_pct = safe_percentage_width(tsmamba_interval, tsmamba_val)
                             samba_width_pct = safe_percentage_width(samba_interval, samba_val)
+                            tft_width_pct = safe_percentage_width(tft_interval, tft_val)
                             
                             # Use the maximum percentage width, then convert back to absolute for ensemble prediction
-                            base_interval_width_pct = max(timesfm_width_pct, tsmamba_width_pct, samba_width_pct)
+                            base_interval_width_pct = max(timesfm_width_pct, tsmamba_width_pct, samba_width_pct, tft_width_pct)
                             base_interval_width_pct = min(base_interval_width_pct, 0.15)  # Cap at 15% for safety
                             
                             # Cap disagreement effect and total width
@@ -559,6 +582,7 @@ class MetaLearningEnsemble:
                         timesfm_interval = timesfm_pred[horizon_key].get('prediction_interval', [timesfm_val-0.005, timesfm_val+0.005])
                         tsmamba_interval = tsmamba_pred[horizon_key].get('prediction_interval', [tsmamba_val-0.005, tsmamba_val+0.005])
                         samba_interval = samba_pred[horizon_key].get('prediction_interval', [samba_val-0.005, samba_val+0.005])
+                        tft_interval = tft_pred[horizon_key].get('prediction_interval', [tft_val-0.005, tft_val+0.005])
                         
                         # Calculate percentage widths with better handling of small values
                         def safe_percentage_width(interval, pred_val):
@@ -575,9 +599,10 @@ class MetaLearningEnsemble:
                         timesfm_width_pct = safe_percentage_width(timesfm_interval, timesfm_val)
                         tsmamba_width_pct = safe_percentage_width(tsmamba_interval, tsmamba_val)
                         samba_width_pct = safe_percentage_width(samba_interval, samba_val)
+                        tft_width_pct = safe_percentage_width(tft_interval, tft_val)
                         
                         # Use the maximum percentage width, then convert back to absolute for ensemble prediction
-                        base_interval_width_pct = max(timesfm_width_pct, tsmamba_width_pct, samba_width_pct)
+                        base_interval_width_pct = max(timesfm_width_pct, tsmamba_width_pct, samba_width_pct, tft_width_pct)
                         base_interval_width_pct = min(base_interval_width_pct, 0.15)  # Cap at 15% for safety
                         
                         enhanced_width_pct = base_interval_width_pct + (disagreement * 0.01)  # Add 1% per unit disagreement
@@ -593,7 +618,8 @@ class MetaLearningEnsemble:
                         'individual_predictions': {
                             'timesfm': timesfm_val,
                             'tsmamba': tsmamba_val,
-                            'samba': samba_val
+                            'samba': samba_val,
+                            'tft': tft_val
                         },
                         'model_weights': adapted_weights.copy(),
                         'regime_info': {
@@ -605,15 +631,21 @@ class MetaLearningEnsemble:
                     }
                 
                 else:
-                    # Fallback if one model fails
-                    if horizon_key in timesfm_pred:
+                    # Fallback if some models fail (prioritize TFT, then TimesFM, then others)
+                    if horizon_key in tft_pred:
+                        ensemble_result[horizon_key] = tft_pred[horizon_key].copy()
+                        ensemble_result[horizon_key]['model_weights'] = {'timesfm': 0.0, 'tsmamba': 0.0, 'samba': 0.0, 'tft': 1.0}
+                    elif horizon_key in timesfm_pred:
                         ensemble_result[horizon_key] = timesfm_pred[horizon_key].copy()
-                        ensemble_result[horizon_key]['model_weights'] = {'timesfm': 1.0, 'tsmamba': 0.0}
+                        ensemble_result[horizon_key]['model_weights'] = {'timesfm': 1.0, 'tsmamba': 0.0, 'samba': 0.0, 'tft': 0.0}
                     elif horizon_key in tsmamba_pred:
                         ensemble_result[horizon_key] = tsmamba_pred[horizon_key].copy()
-                        ensemble_result[horizon_key]['model_weights'] = {'timesfm': 0.0, 'tsmamba': 1.0}
+                        ensemble_result[horizon_key]['model_weights'] = {'timesfm': 0.0, 'tsmamba': 1.0, 'samba': 0.0, 'tft': 0.0}
+                    elif horizon_key in samba_pred:
+                        ensemble_result[horizon_key] = samba_pred[horizon_key].copy()
+                        ensemble_result[horizon_key]['model_weights'] = {'timesfm': 0.0, 'tsmamba': 0.0, 'samba': 1.0, 'tft': 0.0}
                     else:
-                        # Both models failed - generate fallback
+                        # All models failed - generate fallback
                         ensemble_result[horizon_key] = self._fallback_prediction(horizon)
             
             # Cache the result with TTL and size management
@@ -704,8 +736,8 @@ class MetaLearningEnsemble:
             'confidence': 0.50,  # Reasonable fallback confidence
             'prediction_interval': [float(prediction - 0.02), float(prediction + 0.02)],
             'model_disagreement': 0.0,
-            'individual_predictions': {'timesfm': prediction, 'tsmamba': prediction, 'samba': prediction},
-            'model_weights': {'timesfm': 0.33, 'tsmamba': 0.33, 'samba': 0.34}
+            'individual_predictions': {'timesfm': prediction, 'tsmamba': prediction, 'samba': prediction, 'tft': prediction},
+            'model_weights': {'timesfm': 0.25, 'tsmamba': 0.25, 'samba': 0.25, 'tft': 0.25}
         }
     
     def _fallback_prediction_full(self) -> Dict[str, Any]:
@@ -757,11 +789,11 @@ class MetaLearningEnsemble:
                     
                     blend_factor = max(0.3, min(0.9, neural_confidence))  # 30%-90% neural weights
                     
-                    # Blend weights
+                    # Blend weights (4 models)
                     blended_weights = {}
-                    for model in ['timesfm', 'tsmamba', 'samba']:
-                        neural_w = neural_weights.get(model, 0.33)
-                        regime_w = regime_weights.get(model, 0.33)
+                    for model in ['timesfm', 'tsmamba', 'samba', 'tft']:
+                        neural_w = neural_weights.get(model, 0.25)
+                        regime_w = regime_weights.get(model, 0.25)
                         blended_weights[model] = blend_factor * neural_w + (1 - blend_factor) * regime_w
                     
                     # Normalize
@@ -788,30 +820,34 @@ class MetaLearningEnsemble:
             regime = regime_state.regime
             base_weights = self.weights.copy()
             
-            # Regime-specific model preferences
+            # Regime-specific model preferences (4 models)
             if regime == MarketRegime.BULL_TREND:
-                # In bull markets, favor TimesFM (trend following) and SAMBA (correlation)
+                # In bull markets, favor TimesFM (trend following) and TFT (temporal patterns)
                 base_weights['timesfm'] *= 1.2
-                base_weights['samba'] *= 1.1
+                base_weights['tft'] *= 1.15  # TFT good at temporal trends
+                base_weights['samba'] *= 1.05
                 base_weights['tsmamba'] *= 0.9
                 
             elif regime == MarketRegime.BEAR_TREND:
-                # In bear markets, favor TSMamba (pattern recognition) for quick reversals
-                base_weights['tsmamba'] *= 1.3
+                # In bear markets, favor TSMamba (pattern recognition) and TFT (uncertainty)
+                base_weights['tsmamba'] *= 1.25
+                base_weights['tft'] *= 1.2  # TFT has native uncertainty estimation
                 base_weights['timesfm'] *= 0.8
-                base_weights['samba'] *= 0.9
+                base_weights['samba'] *= 0.85
                 
             elif regime == MarketRegime.HIGH_VOLATILITY:
-                # In volatile markets, balance all models but slightly favor SAMBA for correlation breaks
-                base_weights['samba'] *= 1.15
-                base_weights['timesfm'] *= 0.9
-                base_weights['tsmamba'] *= 1.0
+                # In volatile markets, favor TFT (uncertainty) and TSMamba (pattern recognition)
+                base_weights['tft'] *= 1.3  # TFT excels in uncertainty quantification
+                base_weights['tsmamba'] *= 1.1
+                base_weights['samba'] *= 1.05  # SAMBA for correlation breaks
+                base_weights['timesfm'] *= 0.8
                 
             elif regime == MarketRegime.SIDEWAYS:
-                # In sideways markets, favor TSMamba for pattern recognition
+                # In sideways markets, favor TSMamba and TFT for pattern recognition
                 base_weights['tsmamba'] *= 1.2
+                base_weights['tft'] *= 1.1  # TFT good at temporal patterns
                 base_weights['timesfm'] *= 0.85
-                base_weights['samba'] *= 1.0
+                base_weights['samba'] *= 0.95
             
             # Normalize weights
             total_weight = sum(base_weights.values())
@@ -843,9 +879,9 @@ class MetaLearningEnsemble:
                     if len(self.performance_history[model]) > self.performance_window:
                         self.performance_history[model] = self.performance_history[model][-self.performance_window:]
             
-            # Calculate new weights based on recent performance
+            # Calculate new weights based on recent performance (4 models)
             recent_performance = {}
-            for model in ['timesfm', 'tsmamba']:
+            for model in ['timesfm', 'tsmamba', 'samba', 'tft']:
                 if self.performance_history[model]:
                     # Use exponentially weighted average (more weight to recent performance)
                     weights = np.exp(np.linspace(-1, 0, len(self.performance_history[model])))
@@ -864,8 +900,9 @@ class MetaLearningEnsemble:
             
             # Apply smoothing to prevent sudden weight changes
             smoothing_factor = 0.2
-            self.weights['timesfm'] = (1 - smoothing_factor) * self.weights['timesfm'] + smoothing_factor * new_weights[0]
-            self.weights['tsmamba'] = (1 - smoothing_factor) * self.weights['tsmamba'] + smoothing_factor * new_weights[1]
+            model_names = ['timesfm', 'tsmamba', 'samba', 'tft']
+            for i, model in enumerate(model_names):
+                self.weights[model] = (1 - smoothing_factor) * self.weights[model] + smoothing_factor * new_weights[i]
             
             # Normalize weights
             total = sum(self.weights.values())
@@ -895,6 +932,8 @@ class MetaLearningEnsemble:
         results = {
             'timesfm': [],
             'tsmamba': [],
+            'samba': [],
+            'tft': [],
             'ensemble': []
         }
         
@@ -913,7 +952,7 @@ class MetaLearningEnsemble:
                 if 'individual_predictions' in predictions[horizon_key]:
                     individual = predictions[horizon_key]['individual_predictions']
                     
-                    for model in ['timesfm', 'tsmamba']:
+                    for model in ['timesfm', 'tsmamba', 'samba', 'tft']:
                         if model in individual:
                             model_pred = individual[model]
                             model_error = abs(model_pred - actual)
@@ -959,8 +998,13 @@ class MetaLearningEnsemble:
         except Exception as e:
             logger.warning(f"TSMamba training failed: {e}")
         
-        # Validate and update weights
-        validation_performance = {'timesfm': [], 'tsmamba': [], 'ensemble': []}
+        try:
+            self.tft.train_model(train_data, train_tickers, epochs=50)
+        except Exception as e:
+            logger.warning(f"TFT training failed: {e}")
+        
+        # Validate and update weights (4 models)
+        validation_performance = {'timesfm': [], 'tsmamba': [], 'samba': [], 'tft': [], 'ensemble': []}
         
         for df, ticker in zip(val_data, val_tickers):
             try:
@@ -1256,6 +1300,11 @@ class MetaLearningEnsemble:
                 'device': str(self.samba.device),
                 'weight': self.weights['samba']
             },
+            'tft': {
+                'loaded': self.tft.is_loaded,
+                'device': str(self.tft.device),
+                'weight': self.weights['tft']
+            },
             'ensemble': {
                 'horizon_len': self.horizon_len,
                 'uncertainty_alpha': self.uncertainty_alpha,
@@ -1272,6 +1321,7 @@ class MetaLearningEnsemble:
         
         # Save individual models
         self.tsmamba.save_model(save_dir / "tsmamba_model.pt")
+        self.tft.save_model(save_dir / "tft_model.pt")
         
         # Save neural meta-learning components
         if self.enable_neural_meta_learning:
@@ -1339,6 +1389,8 @@ class MetaLearningEnsemble:
         try:
             # Load individual models
             self.tsmamba.load_model(load_dir / "tsmamba_model.pt")
+            if (load_dir / "tft_model.pt").exists():
+                self.tft.load_model(load_dir / "tft_model.pt")
             
             # Load ensemble configuration
             import json

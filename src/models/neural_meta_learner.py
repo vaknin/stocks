@@ -354,8 +354,8 @@ class NeuralMetaLearner(nn.Module):
             if weights.shape[0] == 1:  # Single sample
                 weights = weights[0]
             
-            # Convert to model name mapping
-            model_names = ['timesfm', 'tsmamba', 'samba']
+            # Convert to model name mapping (4 models: TimesFM, TSMamba, SAMBA, TFT)
+            model_names = ['timesfm', 'tsmamba', 'samba', 'tft']
             weight_dict = {name: float(weight) for name, weight in zip(model_names, weights)}
             
             output = {
