@@ -283,6 +283,39 @@ class TimesFMPredictor:
                     result = self._predict_with_current_settings(df, ticker)
                     self.context_len = original_context  # Restore original
                     return result
+    
+    def _calculate_volatility_threshold(self, horizon: int, ticker: str, interval_width: float) -> float:
+        """Calculate volatility-adaptive threshold for interval width."""
+        # Base thresholds by horizon (absolute percentage points)
+        base_thresholds = {
+            1: 0.08,   # 8% for daily
+            5: 0.12,   # 12% for weekly  
+            20: 0.20   # 20% for monthly
+        }
+        
+        base_threshold = base_thresholds.get(horizon, 0.08 + horizon * 0.01)
+        
+        # Adjust for stock volatility class (semiconductor stocks are more volatile)
+        volatility_multiplier = 1.2 if self._is_high_volatility_stock(ticker) else 1.0
+        
+        return base_threshold * volatility_multiplier
+    
+    def _is_high_volatility_stock(self, ticker: str) -> bool:
+        """Check if stock is typically high volatility (tech/semiconductor)."""
+        high_vol_stocks = {
+            'NVDA', 'AMD', 'INTC', 'AVGO', 'QCOM', 'MU', 'ARM', 'SMCI', 
+            'TSLA', 'MRNA', 'SHOP', 'NFLX', 'META', 'GOOGL', 'AAPL'
+        }
+        return ticker in high_vol_stocks
+    
+    def _estimate_recent_volatility(self, ticker: str) -> float:
+        """Estimate recent volatility for the stock (fallback to typical values)."""
+        # In a full implementation, this would calculate from recent price data
+        # For now, use typical volatility estimates by stock type
+        high_vol_estimate = 0.35  # 35% annualized for tech stocks
+        normal_vol_estimate = 0.20  # 20% annualized for normal stocks
+        
+        return high_vol_estimate if self._is_high_volatility_stock(ticker) else normal_vol_estimate
                 finally:
                     self.context_len = original_context  # Ensure restoration
             else:
@@ -362,34 +395,48 @@ class TimesFMPredictor:
                         point_forecast, experimental_quantile_forecast, horizon, ticker
                     )
                     
-                    # Calculate interval width as percentage of prediction value
+                    # Calculate interval width using improved logic
                     interval_width_abs = upper_bound - lower_bound
                     
-                    # Convert absolute interval to percentage of prediction (avoid division by zero)
-                    if abs(pred_value) > 0.01:  # Avoid division by very small numbers
+                    # Use volatility-adaptive threshold system instead of prediction-relative percentage
+                    # This avoids inflated percentages for small predictions
+                    volatility_threshold = self._calculate_volatility_threshold(horizon, ticker, interval_width_abs)
+                    interval_is_too_wide = interval_width_abs > volatility_threshold
+                    
+                    # Calculate percentage for logging (but don't use for threshold decisions)
+                    if abs(pred_value) > 0.005:  # Avoid division by very small numbers
                         interval_width_pct = (interval_width_abs / abs(pred_value)) * 100
                     else:
                         interval_width_pct = interval_width_abs * 100  # Fallback for very small predictions
                     
-                    logger.debug(f"TimesFM interval: {interval_width_abs:.4f} absolute, {interval_width_pct:.2f}% relative for {ticker} horizon_{horizon}")
+                    logger.debug(f"TimesFM interval: {interval_width_abs:.4f} absolute, {interval_width_pct:.1f}% relative, threshold: {volatility_threshold:.4f} for {ticker} horizon_{horizon}")
                     
-                    if interval_width_pct > 75.0:  # Realistic threshold for volatile semiconductor stocks
+                    if interval_is_too_wide:
                         logger.info(
-                            f"📊 TimesFM Threshold Decision: interval width {interval_width_pct:.2f}% exceeds 75.0% threshold "
-                            f"for {ticker} horizon_{horizon}, using adaptive fallback (original threshold was 17.5%)"
+                            f"📊 TimesFM Adaptive Threshold: interval width {interval_width_abs:.4f} exceeds volatility threshold {volatility_threshold:.4f} "
+                            f"for {ticker} horizon_{horizon}, using calibrated uncertainty ({interval_width_pct:.1f}% relative)"
                         )
                         # Use adaptive fallback prediction based on market volatility and horizon
                         # Adapt uncertainty to horizon and market volatility (realistic approach)
-                        base_uncertainty = 0.02 + (horizon * 0.005)  # 2% + 0.5% per horizon day
-                        volatility_factor = min(1.5, max(0.5, abs(pred_value) * 10))  # Scale with prediction magnitude
-                        uncertainty_pct = min(0.15, base_uncertainty * volatility_factor)  # Cap at 15%
+                        base_uncertainty = 0.015 + (horizon * 0.003)  # 1.5% + 0.3% per horizon day (more conservative)
                         
-                        uncertainty_abs = abs(pred_value) * uncertainty_pct
+                        # Scale with actual volatility instead of prediction magnitude
+                        recent_volatility = self._estimate_recent_volatility(ticker)
+                        volatility_factor = min(2.0, max(0.8, recent_volatility * 50))  # Scale with recent volatility
+                        uncertainty_pct = min(0.12, base_uncertainty * volatility_factor)  # Cap at 12%
+                        
+                        uncertainty_abs = uncertainty_pct  # Use absolute percentage, not relative to prediction
                         lower_bound = pred_value - uncertainty_abs
                         upper_bound = pred_value + uncertainty_abs
-                        interval_width_pct = uncertainty_pct * 2 * 100  # Total width percentage
+                        interval_width_abs = upper_bound - lower_bound
                         
-                        logger.debug(f"Adaptive fallback uncertainty for {ticker} horizon_{horizon}: {uncertainty_pct:.1%} -> {interval_width_pct:.1f}% width")
+                        # Recalculate percentage with new bounds
+                        if abs(pred_value) > 0.005:
+                            interval_width_pct = (interval_width_abs / abs(pred_value)) * 100
+                        else:
+                            interval_width_pct = interval_width_abs * 100
+                        
+                        logger.debug(f"Adaptive calibrated uncertainty for {ticker} horizon_{horizon}: {uncertainty_pct:.1%} -> {interval_width_pct:.1f}% relative width")
                     
                     predictions[f'horizon_{horizon}'] = {
                         'prediction': pred_value,

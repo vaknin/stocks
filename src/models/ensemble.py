@@ -111,8 +111,11 @@ class MetaLearningEnsemble:
             'ensemble': []
         }
         
-        # Prediction cache for efficiency
+        # Enhanced prediction cache with TTL and memory management
         self.prediction_cache = {}
+        self.cache_ttl = {}  # Cache time-to-live tracking
+        self.cache_max_size = 100  # Maximum cache entries
+        self.cache_ttl_seconds = 300  # 5 minutes TTL
         
         # Initialize neural meta-learning components
         self.neural_meta_learner = None
@@ -391,7 +394,8 @@ class MetaLearningEnsemble:
             primary_df = df
             data_dict = {ticker: df}
             cache_key = f"{ticker}_{len(df)}_{df.index[-1] if len(df) > 0 else 'empty'}"
-        if use_cache and cache_key in self.prediction_cache:
+        # Check cache with TTL validation
+        if use_cache and self._is_cache_valid(cache_key):
             logger.debug(f"Using cached prediction for {ticker}")
             return self.prediction_cache[cache_key]
         
@@ -403,10 +407,27 @@ class MetaLearningEnsemble:
             # Adapt MAPIE parameters for current regime
             regime_alpha = self._adapt_mapie_for_regime(regime_state)
             
-            # Get predictions from individual models
-            timesfm_pred = self.timesfm.predict(primary_df, ticker, return_confidence)
-            tsmamba_pred = self.tsmamba.predict(primary_df, ticker, return_confidence)
-            samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
+            # Get predictions from individual models with memory management
+            try:
+                # Clear any GPU cache before predictions to avoid OOM
+                self._manage_gpu_memory()
+                
+                timesfm_pred = self.timesfm.predict(primary_df, ticker, return_confidence)
+                tsmamba_pred = self.tsmamba.predict(primary_df, ticker, return_confidence)
+                samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
+                
+            except Exception as e:
+                if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
+                    logger.warning(f"GPU memory issue during prediction for {ticker}: {e}")
+                    logger.info("Attempting prediction with memory cleanup")
+                    
+                    # Force memory cleanup and retry once
+                    self._force_gpu_cleanup()
+                    timesfm_pred = self.timesfm.predict(primary_df, ticker, return_confidence)
+                    tsmamba_pred = self.tsmamba.predict(primary_df, ticker, return_confidence)
+                    samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
+                else:
+                    raise e
             
             # Combine predictions using weighted averaging
             ensemble_result = {}
@@ -595,9 +616,9 @@ class MetaLearningEnsemble:
                         # Both models failed - generate fallback
                         ensemble_result[horizon_key] = self._fallback_prediction(horizon)
             
-            # Cache the result
+            # Cache the result with TTL and size management
             if use_cache:
-                self.prediction_cache[cache_key] = ensemble_result
+                self._cache_prediction(cache_key, ensemble_result)
             
             # Add ensemble metadata
             ensemble_result['ensemble_info'] = {
@@ -1133,6 +1154,90 @@ class MetaLearningEnsemble:
             logger.error(f"Error loading neural components: {e}")
             return False
 
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Check if cache entry is valid (exists and not expired)."""
+        if cache_key not in self.prediction_cache:
+            return False
+            
+        if cache_key not in self.cache_ttl:
+            return False
+            
+        import time
+        current_time = time.time()
+        return (current_time - self.cache_ttl[cache_key]) < self.cache_ttl_seconds
+    
+    def _cache_prediction(self, cache_key: str, prediction: Dict[str, Any]) -> None:
+        """Cache prediction with TTL and size management."""
+        import time
+        
+        # Remove expired entries first
+        self._cleanup_expired_cache()
+        
+        # Remove oldest entries if cache is full
+        if len(self.prediction_cache) >= self.cache_max_size:
+            self._evict_oldest_cache_entries(self.cache_max_size // 4)  # Remove 25% of cache
+        
+        # Add new entry
+        self.prediction_cache[cache_key] = prediction
+        self.cache_ttl[cache_key] = time.time()
+    
+    def _cleanup_expired_cache(self) -> None:
+        """Remove expired cache entries."""
+        import time
+        current_time = time.time()
+        
+        expired_keys = [
+            key for key, timestamp in self.cache_ttl.items()
+            if (current_time - timestamp) >= self.cache_ttl_seconds
+        ]
+        
+        for key in expired_keys:
+            self.prediction_cache.pop(key, None)
+            self.cache_ttl.pop(key, None)
+        
+        if expired_keys:
+            logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+    
+    def _evict_oldest_cache_entries(self, num_to_evict: int) -> None:
+        """Evict oldest cache entries to manage memory."""
+        if num_to_evict <= 0:
+            return
+            
+        # Sort by timestamp (oldest first)
+        sorted_entries = sorted(self.cache_ttl.items(), key=lambda x: x[1])
+        oldest_keys = [key for key, _ in sorted_entries[:num_to_evict]]
+        
+        for key in oldest_keys:
+            self.prediction_cache.pop(key, None)
+            self.cache_ttl.pop(key, None)
+        
+        logger.debug(f"Evicted {len(oldest_keys)} oldest cache entries")
+    
+    def clear_prediction_cache(self) -> None:
+        """Clear all cached predictions."""
+        self.prediction_cache.clear()
+        self.cache_ttl.clear()
+        logger.info("Prediction cache cleared")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        import time
+        current_time = time.time()
+        
+        valid_entries = sum(
+            1 for timestamp in self.cache_ttl.values()
+            if (current_time - timestamp) < self.cache_ttl_seconds
+        )
+        
+        return {
+            'total_entries': len(self.prediction_cache),
+            'valid_entries': valid_entries,
+            'expired_entries': len(self.prediction_cache) - valid_entries,
+            'cache_hit_ratio': getattr(self, '_cache_hits', 0) / max(1, getattr(self, '_cache_requests', 1)),
+            'max_size': self.cache_max_size,
+            'ttl_seconds': self.cache_ttl_seconds
+        }
+    
     def get_model_status(self) -> Dict[str, Any]:
         """Get status information about ensemble components."""
         return {
@@ -1154,9 +1259,10 @@ class MetaLearningEnsemble:
             'ensemble': {
                 'horizon_len': self.horizon_len,
                 'uncertainty_alpha': self.uncertainty_alpha,
-                'cache_size': len(self.prediction_cache)
+                'cache_stats': self.get_cache_stats()
             },
-            'neural_meta_learning': self.get_neural_meta_learning_status()
+            'neural_meta_learning': self.get_neural_meta_learning_status(),
+            'memory_stats': self._get_memory_stats()
         }
     
     def save_ensemble(self, path: str):
@@ -1188,6 +1294,39 @@ class MetaLearningEnsemble:
             json.dump(config_data, f, indent=2)
         
         logger.info(f"Ensemble saved to {path}")
+    
+    def _manage_gpu_memory(self) -> None:
+        """Proactive GPU memory management for stable predictions."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                # Clear cache if memory usage is high
+                memory_used = torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated()
+                if memory_used > 0.80:  # If using >80% of memory
+                    torch.cuda.empty_cache()
+                    logger.debug("GPU cache cleared - high memory usage detected")
+                    
+        except ImportError:
+            pass  # PyTorch not available
+        except Exception as e:
+            logger.debug(f"GPU memory management error: {e}")
+    
+    def _force_gpu_cleanup(self) -> None:
+        """Force cleanup of GPU memory (last resort)."""
+        try:
+            import torch
+            import gc
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                gc.collect()  # Python garbage collection
+                logger.info("Forced GPU memory cleanup completed")
+                
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Force GPU cleanup failed: {e}")
     
     def load_ensemble(self, path: str) -> bool:
         """Load the ensemble configuration and models."""
@@ -1229,3 +1368,29 @@ class MetaLearningEnsemble:
         except Exception as e:
             logger.error(f"Error loading ensemble: {e}")
             return False
+    
+    def _get_memory_stats(self) -> Dict[str, Any]:
+        """Get memory usage statistics."""
+        stats = {'cpu_memory_mb': 0, 'gpu_memory_mb': 0, 'gpu_available': False}
+        
+        try:
+            import psutil
+            process = psutil.Process()
+            stats['cpu_memory_mb'] = process.memory_info().rss / 1024 / 1024
+        except ImportError:
+            pass
+        
+        try:
+            import torch
+            if torch.cuda.is_available():
+                stats['gpu_available'] = True
+                stats['gpu_memory_mb'] = torch.cuda.memory_allocated() / 1024 / 1024
+                stats['gpu_memory_cached_mb'] = torch.cuda.memory_reserved() / 1024 / 1024
+                stats['gpu_utilization_pct'] = (
+                    torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated() * 100
+                    if torch.cuda.max_memory_allocated() > 0 else 0
+                )
+        except ImportError:
+            pass
+        
+        return stats

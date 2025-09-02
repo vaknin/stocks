@@ -10,6 +10,9 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from loguru import logger
 import yfinance as yf
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Import our existing models
 try:
@@ -65,11 +68,19 @@ class DailyMarketAnalyzer:
         from ..config.settings import config
         self.target_stocks = config.STOCK_TICKERS
         
-        # Optimized confidence thresholds based on 2024-2025 ML research
-        self.confidence_thresholds = {
+        # Dynamic confidence thresholds - more adaptive for revenue generation
+        self.base_confidence_thresholds = {
             'intraday': 0.72,  # 72% for 5-min scalping (ML-optimized)
-            'daily': 0.78,     # 78% for daily swings (ML-optimized)
+            'daily': 0.75,     # Reduced from 78% to 75% for more signals
             'weekly': 0.68     # 68% for weekly positions (ML-optimized)
+        }
+        
+        # Regime-adaptive threshold adjustments
+        self.regime_confidence_adjustments = {
+            'bull_trend': -0.03,      # Lower thresholds in bull markets (more aggressive)
+            'bear_trend': 0.00,       # Keep base thresholds in bear markets
+            'high_volatility': 0.02,  # Slightly higher thresholds in volatile markets
+            'sideways': -0.02         # Lower thresholds in sideways markets
         }
         
         self.return_targets = {
@@ -332,10 +343,13 @@ class DailyMarketAnalyzer:
                 stock_debug['confidence'] = confidence  # Update with adjusted value
                 logger.info(f"🎯 {symbol}: Regime-adjusted Prediction={prediction:.3%}, Confidence={confidence:.1%}")
             
-            # Apply confidence threshold
-            confidence_threshold = self.confidence_thresholds[timeframe]
+            # Apply dynamic confidence threshold (regime-adaptive)
+            base_threshold = self.base_confidence_thresholds[timeframe]
+            regime_adjustment = self.regime_confidence_adjustments.get(market_regime, 0.0)
+            confidence_threshold = max(0.65, base_threshold + regime_adjustment)  # Floor at 65%
+            
             if confidence < confidence_threshold:
-                stock_debug['filters_failed'].append(f"Confidence {confidence:.1%} < {confidence_threshold:.1%}")
+                stock_debug['filters_failed'].append(f"Confidence {confidence:.1%} < {confidence_threshold:.1%} (regime-adjusted)")
                 stock_debug['rejection_reason'] = f"Low confidence: {confidence:.1%} < {confidence_threshold:.1%}"
                 stock_debug['final_result'] = 'REJECTED'
                 if debug_info is not None:
@@ -343,7 +357,7 @@ class DailyMarketAnalyzer:
                 logger.info(f"🔍 {symbol}: REJECTED - {stock_debug['rejection_reason']}")
                 return None
             
-            stock_debug['filters_passed'].append(f"Confidence {confidence:.1%} >= {confidence_threshold:.1%}")
+            stock_debug['filters_passed'].append(f"Confidence {confidence:.1%} >= {confidence_threshold:.1%} (regime-adjusted)")
             
             # Filter with MAPIE uncertainty
             try:
@@ -351,13 +365,19 @@ class DailyMarketAnalyzer:
                     prediction, confidence, pred_interval
                 )
                 if filtered_prediction is None:
-                    stock_debug['filters_failed'].append("MAPIE uncertainty filter")
-                    stock_debug['rejection_reason'] = "Failed MAPIE uncertainty filtering"
-                    stock_debug['final_result'] = 'REJECTED'
-                    if debug_info is not None:
-                        debug_info.append(stock_debug)
-                    logger.info(f"🔍 {symbol}: REJECTED - {stock_debug['rejection_reason']}")
-                    return None
+                    # Check if it's a magnitude issue and override for high confidence
+                    if confidence > 0.85 and abs(prediction) > 0.002:  # 85%+ confidence and >0.2% magnitude
+                        logger.info(f"🟡 MAPIE Override: High confidence {confidence:.1%} overrides MAPIE filter for {symbol}")
+                        stock_debug['filters_passed'].append("MAPIE Filter: High confidence override")
+                        logger.info(f"✅ MAPIE Filter PASSED: {prediction:.1%} return, {confidence:.1%} confidence (override)")
+                    else:
+                        stock_debug['filters_failed'].append("MAPIE uncertainty filter")
+                        stock_debug['rejection_reason'] = "Failed MAPIE uncertainty filtering"
+                        stock_debug['final_result'] = 'REJECTED'
+                        if debug_info is not None:
+                            debug_info.append(stock_debug)
+                        logger.info(f"🔍 {symbol}: REJECTED - {stock_debug['rejection_reason']}")
+                        return None
                 else:
                     stock_debug['filters_passed'].append("MAPIE uncertainty OK")
             except Exception as e:
@@ -546,6 +566,73 @@ class DailyMarketAnalyzer:
         
         return adjusted_prediction, adjusted_confidence
     
+    def _generate_signals_parallel(
+        self, 
+        market_data: Dict[str, pd.DataFrame], 
+        market_regime: str, 
+        timeframes: List[str],
+        debug_info: List[Dict],
+        debug_info_lock: threading.Lock
+    ) -> List:
+        """Generate signals using parallel processing for better performance."""
+        all_signals = []
+        
+        # Create tasks for parallel execution
+        tasks = []
+        for timeframe in timeframes:
+            for symbol in market_data.keys():
+                tasks.append((symbol, market_data[symbol], market_regime, timeframe))
+        
+        logger.info(f"📊 Processing {len(tasks)} signal generation tasks in parallel")
+        
+        # Use ThreadPoolExecutor for I/O bound operations (model predictions)
+        max_workers = min(8, len(tasks))  # Limit to avoid GPU memory issues
+        batch_size = max(1, len(tasks) // max_workers)  # Process in batches
+        
+        def process_signal_batch(batch_tasks):
+            """Process a batch of signal generation tasks."""
+            batch_signals = []
+            local_debug_info = []  # Local debug info for this batch
+            
+            for symbol, data, regime, timeframe in batch_tasks:
+                try:
+                    signal = self.generate_stock_signal(
+                        symbol, data, regime, timeframe, local_debug_info
+                    )
+                    if signal:
+                        batch_signals.append(signal)
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                    local_debug_info.append({
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'final_result': 'ERROR',
+                        'rejection_reason': f"Processing error: {str(e)}"
+                    })
+            
+            # Thread-safe update of shared debug info
+            with debug_info_lock:
+                debug_info.extend(local_debug_info)
+            
+            return batch_signals
+        
+        # Split tasks into batches
+        task_batches = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
+        
+        # Process batches in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_batch = {executor.submit(process_signal_batch, batch): batch for batch in task_batches}
+            
+            for future in as_completed(future_to_batch):
+                try:
+                    batch_signals = future.result(timeout=60)  # 60 second timeout per batch
+                    all_signals.extend(batch_signals)
+                except Exception as e:
+                    logger.error(f"Batch processing error: {e}")
+        
+        logger.info(f"✅ Parallel signal generation complete: {len(all_signals)} signals generated")
+        return all_signals
+    
     def _print_debugging_summary(self, debug_info: List[Dict], market_regime: str, timeframes: List[str]) -> None:
         """Print comprehensive debugging summary for all stocks."""
         if not debug_info:
@@ -651,16 +738,14 @@ class DailyMarketAnalyzer:
             # Generate signals for all stocks and timeframes with debugging
             all_signals = []
             debug_info = []  # Collect debugging information for all stocks
+            debug_info_lock = threading.Lock()  # Thread-safe access to debug_info
             
             logger.info(f"🔍 DEBUGGING: Analyzing {len(market_data)} stocks for {timeframes} timeframes")
             
-            for timeframe in timeframes:
-                for symbol in market_data.keys():
-                    signal = self.generate_stock_signal(
-                        symbol, market_data[symbol], market_regime, timeframe, debug_info
-                    )
-                    if signal:
-                        all_signals.append(signal)
+            # Use parallel processing for signal generation
+            all_signals = self._generate_signals_parallel(
+                market_data, market_regime, timeframes, debug_info, debug_info_lock
+            )
             
             # Print comprehensive debugging summary
             self._print_debugging_summary(debug_info, market_regime, timeframes)
