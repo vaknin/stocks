@@ -283,6 +283,13 @@ class TimesFMPredictor:
                     result = self._predict_with_current_settings(df, ticker)
                     self.context_len = original_context  # Restore original
                     return result
+                except Exception as e:
+                    self.context_len = original_context  # Restore original on error
+                    logger.warning(f"Prediction failed with reduced context for {ticker}: {e}")
+                    return None
+            else:
+                logger.warning(f"Insufficient data for {ticker}: {len(df)} < {min_required}")
+                return None
     
     def _calculate_volatility_threshold(self, horizon: int, ticker: str, interval_width: float) -> float:
         """Calculate volatility-adaptive threshold for interval width."""
