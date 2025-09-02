@@ -53,7 +53,6 @@ scikit-learn==1.5.2
 # TECHNICAL ANALYSIS
 # ================================
 # Technical indicators
-Ta-Lib==0.6.5
 pandas-ta==0.3.14b0
 
 # ================================

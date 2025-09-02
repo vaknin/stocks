@@ -8,12 +8,6 @@ import warnings
 from loguru import logger
 from collections import deque
 
-try:
-    import ta
-    TA_AVAILABLE = True
-except ImportError:
-    TA_AVAILABLE = False
-    logger.warning("TA-Lib not available. Using simplified technical indicators.")
 
 from ..config.settings import config
 
@@ -124,24 +118,8 @@ class MetaFeatureExtractor:
             else:
                 features.extend([1.0, 1.0])  # Neutral volume features
             
-            # 5. Technical Indicators
-            if TA_AVAILABLE and len(recent_df) >= 14:
-                # RSI
-                rsi = ta.momentum.RSIIndicator(recent_df['close'], window=14).rsi().iloc[-1]
-                rsi_normalized = (rsi - 50) / 50  # Normalize to [-1, 1]
-                
-                # MACD
-                macd_line = ta.trend.MACD(recent_df['close']).macd().iloc[-1]
-                macd_signal = ta.trend.MACD(recent_df['close']).macd_signal().iloc[-1]
-                macd_histogram = macd_line - macd_signal
-                
-                # Bollinger Bands position
-                bb = ta.volatility.BollingerBands(recent_df['close'], window=20)
-                bb_position = (recent_df['close'].iloc[-1] - bb.bollinger_mavg().iloc[-1]) / bb.bollinger_wband().iloc[-1]
-                
-                features.extend([rsi_normalized, macd_histogram, bb_position])
-            else:
-                # Simplified technical indicators
+            # 5. Technical Indicators (Simplified implementations)
+            if len(recent_df) >= 14:
                 # Simple RSI approximation
                 price_changes = recent_df['close'].pct_change().dropna()
                 gains = price_changes.where(price_changes > 0, 0)
@@ -163,6 +141,9 @@ class MetaFeatureExtractor:
                 bb_position_approx = (recent_df['close'].iloc[-1] - ma_20) / (2 * std_20 + 1e-8)
                 
                 features.extend([rsi_normalized, macd_approx, bb_position_approx])
+            else:
+                # Default values for insufficient data
+                features.extend([0.0, 0.0, 0.0])
             
             # 6. Cross-Asset Features (if multi-stock data available)
             if multi_stock_data and len(multi_stock_data) > 1:
