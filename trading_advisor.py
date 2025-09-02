@@ -17,8 +17,8 @@ from pathlib import Path
 from datetime import datetime
 from loguru import logger
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add current directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from src.trading.portfolio_tracker import PortfolioTracker
 from src.trading.recommendation_engine import TradingRecommendationEngine
