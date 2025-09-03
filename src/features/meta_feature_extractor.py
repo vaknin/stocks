@@ -32,11 +32,13 @@ class MetaFeatureExtractor:
         self.performance_window = performance_window
         self.volatility_window = volatility_window
         
-        # Model performance tracking
+        # Model performance tracking (including multi-resolution)
         self.model_performance_history = {
             'timesfm': deque(maxlen=performance_window),
             'tsmamba': deque(maxlen=performance_window),
             'samba': deque(maxlen=performance_window),
+            'tft': deque(maxlen=performance_window),
+            'multi_resolution': deque(maxlen=performance_window),
             'ensemble': deque(maxlen=performance_window)
         }
         
@@ -401,6 +403,175 @@ class MetaFeatureExtractor:
         
         return trends
     
+    def extract_multi_resolution_features(
+        self,
+        price_data: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
+        multi_resolution_predictions: Optional[Dict[str, Any]] = None,
+        adaptive_weights: Optional[Dict[str, Any]] = None
+    ) -> np.ndarray:
+        """
+        Extract meta-features specific to multi-resolution prediction system.
+        
+        Args:
+            price_data: Price data for feature calculation
+            multi_resolution_predictions: Recent multi-resolution predictions
+            adaptive_weights: Current adaptive resolution weights
+            
+        Returns:
+            Array of multi-resolution meta-features
+        """
+        try:
+            features = []
+            
+            # Resolution availability features
+            resolution_availability = [0.0, 0.0, 0.0]  # minute, hourly, weekly
+            if multi_resolution_predictions:
+                if any('minute' in str(k) for k in multi_resolution_predictions.keys()):
+                    resolution_availability[0] = 1.0
+                if any('hourly' in str(k) for k in multi_resolution_predictions.keys()):
+                    resolution_availability[1] = 1.0  
+                if any('weekly' in str(k) for k in multi_resolution_predictions.keys()):
+                    resolution_availability[2] = 1.0
+                    
+            features.extend(resolution_availability)
+            
+            # Adaptive weight features
+            if adaptive_weights and 'final_weights' in adaptive_weights:
+                weights = adaptive_weights['final_weights']
+                features.extend([
+                    weights.get('minute', 0.0),
+                    weights.get('hourly', 0.0),
+                    weights.get('weekly', 0.0)
+                ])
+                
+                # Weight distribution entropy (diversity measure)
+                weight_values = [weights.get(res, 0.0) for res in ['minute', 'hourly', 'weekly']]
+                weight_values = [w for w in weight_values if w > 0]  # Remove zeros
+                if weight_values:
+                    weight_entropy = -sum(w * np.log(w + 1e-8) for w in weight_values)
+                    features.append(weight_entropy)
+                else:
+                    features.append(0.0)
+                    
+                # Dominant resolution indicator
+                dominant_res = max(weights.items(), key=lambda x: x[1])[0] if weights else 'none'
+                dominant_indicators = [0.0, 0.0, 0.0]  # minute, hourly, weekly
+                if dominant_res == 'minute':
+                    dominant_indicators[0] = 1.0
+                elif dominant_res == 'hourly':
+                    dominant_indicators[1] = 1.0
+                elif dominant_res == 'weekly':
+                    dominant_indicators[2] = 1.0
+                features.extend(dominant_indicators)
+                
+            else:
+                # Default values when adaptive weights not available
+                features.extend([1/3, 1/3, 1/3])  # Equal weights
+                features.append(np.log(3))  # Maximum entropy for equal weights
+                features.extend([0.0, 0.0, 0.0])  # No dominant resolution
+            
+            # Multi-resolution performance features
+            if hasattr(self, 'model_performance_history') and 'multi_resolution' in self.model_performance_history:
+                mr_performance = list(self.model_performance_history['multi_resolution'])
+                if mr_performance:
+                    features.extend([
+                        np.mean(mr_performance),       # Average performance
+                        np.std(mr_performance),        # Performance volatility
+                        mr_performance[-1] if mr_performance else 0.5,  # Recent performance
+                        max(mr_performance) - min(mr_performance),  # Performance range
+                    ])
+                else:
+                    features.extend([0.5, 0.0, 0.5, 0.0])  # Default values
+            else:
+                features.extend([0.5, 0.0, 0.5, 0.0])  # Default values
+            
+            # Cross-resolution agreement features
+            if multi_resolution_predictions:
+                try:
+                    # Extract predictions for same horizon from different resolutions
+                    horizon_predictions = {}
+                    for key, pred_data in multi_resolution_predictions.items():
+                        if key.startswith('horizon_') and isinstance(pred_data, dict):
+                            if 'prediction' in pred_data:
+                                horizon_predictions[key] = pred_data['prediction']
+                    
+                    if len(horizon_predictions) > 1:
+                        pred_values = list(horizon_predictions.values())
+                        # Cross-resolution agreement (inverse of disagreement)
+                        agreement = 1.0 / (1.0 + np.std(pred_values))
+                        features.append(agreement)
+                        
+                        # Prediction range normalized
+                        pred_range = (max(pred_values) - min(pred_values)) / (abs(np.mean(pred_values)) + 1e-6)
+                        features.append(min(pred_range, 1.0))  # Cap at 1.0
+                    else:
+                        features.extend([1.0, 0.0])  # Perfect agreement, no range
+                else:
+                    features.extend([1.0, 0.0])  # Default values
+            else:
+                features.extend([1.0, 0.0])  # Default values
+            
+            # Time-series characteristics that affect resolution choice
+            if isinstance(price_data, pd.DataFrame) and len(price_data) >= 10:
+                returns = price_data['close'].pct_change().dropna()
+                
+                # Autocorrelation at different lags (resolution relevance indicator)
+                autocorrs = []
+                for lag in [1, 5, 20]:  # Daily, weekly, monthly
+                    if len(returns) > lag:
+                        autocorr = returns.autocorr(lag=lag)
+                        autocorrs.append(autocorr if not np.isnan(autocorr) else 0.0)
+                    else:
+                        autocorrs.append(0.0)
+                features.extend(autocorrs)
+                
+                # Volatility clustering (affects resolution importance)
+                if len(returns) >= 20:
+                    vol_short = returns.rolling(5).std().std()  # Short-term vol volatility
+                    vol_long = returns.rolling(20).std().std()  # Long-term vol volatility
+                    vol_clustering = vol_short / (vol_long + 1e-6)
+                    features.append(min(vol_clustering, 5.0))  # Cap extreme values
+                else:
+                    features.append(1.0)  # Neutral clustering
+                    
+                # Trend persistence (weekly resolution relevance)
+                if len(returns) >= 10:
+                    trend_consistency = abs(returns.rolling(10).mean().mean() / (returns.std() + 1e-6))
+                    features.append(min(trend_consistency, 2.0))  # Cap extreme values
+                else:
+                    features.append(0.0)  # No trend
+                    
+            else:
+                # Default values for insufficient data
+                features.extend([0.0, 0.0, 0.0])  # No autocorrelations
+                features.append(1.0)  # Neutral vol clustering
+                features.append(0.0)  # No trend persistence
+            
+            # Market session feature (affects minute/hourly resolution importance)
+            current_hour = datetime.now().hour
+            session_features = [0.0, 0.0, 0.0]  # pre_market, regular, after_hours
+            if 4 <= current_hour < 9:
+                session_features[0] = 1.0  # Pre-market
+            elif 9 <= current_hour < 16:
+                session_features[1] = 1.0  # Regular hours
+            else:
+                session_features[2] = 1.0  # After hours
+            features.extend(session_features)
+            
+            # Ensure consistent feature count (pad or truncate to 32 features)
+            target_length = 32
+            if len(features) < target_length:
+                features.extend([0.0] * (target_length - len(features)))
+            elif len(features) > target_length:
+                features = features[:target_length]
+            
+            return np.array(features, dtype=np.float32)
+            
+        except Exception as e:
+            logger.error(f"Error extracting multi-resolution features: {e}")
+            # Return default feature vector
+            return np.zeros(32, dtype=np.float32)
+    
     def extract_combined_features(
         self,
         price_data: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
@@ -444,8 +615,11 @@ class MetaFeatureExtractor:
             else:
                 performance_features = self._get_default_performance_features()
             
+            # Extract multi-resolution features
+            multi_resolution_features = self.extract_multi_resolution_features(price_data)
+            
             # Combine all features
-            combined_features = np.concatenate([regime_features, performance_features])
+            combined_features = np.concatenate([regime_features, performance_features, multi_resolution_features])
             
             # Normalize features to reasonable range
             combined_features = np.tanh(combined_features)  # Squash to [-1, 1]
@@ -496,7 +670,8 @@ class MetaFeatureExtractor:
         """Get default combined features when extraction fails."""
         regime_features = self._get_default_regime_features()
         performance_features = self._get_default_performance_features()
-        return np.concatenate([regime_features, performance_features])
+        multi_resolution_features = np.zeros(32, dtype=np.float32)  # Default multi-resolution features
+        return np.concatenate([regime_features, performance_features, multi_resolution_features])
     
     def _clean_cache(self) -> None:
         """Clean old cache entries."""

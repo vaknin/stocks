@@ -16,6 +16,13 @@ from .uncertainty import ConformalPredictor
 from .regime_detector import HiddenMarkovRegimeDetector, MarketRegime
 from .neural_meta_learner import NeuralMetaLearner
 from .online_learner import OnlineLearningSystem
+from .multi_resolution import (
+    MinuteScalePredictor,
+    HourlyPredictor,
+    WeeklyPredictor,
+    ResolutionFuser,
+    AdaptiveResolutionWeighting
+)
 from ..features.meta_feature_extractor import MetaFeatureExtractor
 from ..config.settings import config
 
@@ -33,7 +40,9 @@ class MetaLearningEnsemble:
         performance_window: int = 50,
         device: str = "auto",
         enable_neural_meta_learning: bool = True,
-        enable_online_learning: bool = True
+        enable_online_learning: bool = True,
+        enable_multi_resolution: bool = True,
+        multi_resolution_weight: float = 0.3
     ):
         """
         Initialize the ensemble framework.
@@ -49,6 +58,8 @@ class MetaLearningEnsemble:
             device: Device for computation
             enable_neural_meta_learning: Enable neural meta-learner for dynamic weights
             enable_online_learning: Enable online learning for continuous adaptation
+            enable_multi_resolution: Enable multi-resolution prediction system
+            multi_resolution_weight: Weight for multi-resolution predictions in ensemble
         """
         
         self.horizon_len = horizon_len if isinstance(horizon_len, list) else [horizon_len]
@@ -56,6 +67,8 @@ class MetaLearningEnsemble:
         self.performance_window = performance_window
         self.enable_neural_meta_learning = enable_neural_meta_learning
         self.enable_online_learning = enable_online_learning
+        self.enable_multi_resolution = enable_multi_resolution
+        self.multi_resolution_weight = multi_resolution_weight
         
         # Initialize models
         logger.info("Initializing ensemble models...")
@@ -80,6 +93,63 @@ class MetaLearningEnsemble:
             device=device
         )
         
+        # Initialize multi-resolution system
+        self.multi_resolution_predictors = None
+        self.resolution_fuser = None
+        self.adaptive_weighting = None
+        
+        if self.enable_multi_resolution:
+            try:
+                logger.info("Initializing multi-resolution prediction system...")
+                
+                # Initialize resolution-specific predictors
+                self.multi_resolution_predictors = {
+                    'minute': MinuteScalePredictor(
+                        lookback_window=30,
+                        prediction_horizons=[1, 5],
+                        device=device
+                    ),
+                    'hourly': HourlyPredictor(
+                        lookback_hours=48,
+                        prediction_horizons=[1, 2, 4],
+                        device=device
+                    ),
+                    'weekly': WeeklyPredictor(
+                        lookback_weeks=26,
+                        prediction_horizons=[5, 10, 20],
+                        device=device
+                    )
+                }
+                
+                # Initialize resolution fusion network
+                self.resolution_fuser = ResolutionFuser(
+                    resolution_dims={
+                        'minute': 64,
+                        'hourly': 128,
+                        'weekly': 256
+                    },
+                    hidden_dim=256,
+                    output_horizons=self.horizon_len,
+                    device=device
+                )
+                
+                # Initialize adaptive resolution weighting
+                self.adaptive_weighting = AdaptiveResolutionWeighting(
+                    performance_window=self.performance_window,
+                    adaptation_rate=0.1,
+                    device=device
+                )
+                
+                logger.info("Multi-resolution system initialized successfully")
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize multi-resolution system: {e}")
+                logger.warning("Falling back to standard ensemble without multi-resolution")
+                self.enable_multi_resolution = False
+                self.multi_resolution_predictors = None
+                self.resolution_fuser = None
+                self.adaptive_weighting = None
+        
         # Initialize regime detector for market adaptation
         self.regime_detector = HiddenMarkovRegimeDetector()
         
@@ -101,7 +171,7 @@ class MetaLearningEnsemble:
         # Current regime adaptive alpha
         self.current_regime_alpha = uncertainty_alpha
         
-        # Model weights (can be dynamic) - now 4 models
+        # Model weights (can be dynamic) - now 4 models + multi-resolution
         self.weights = {
             'timesfm': timesfm_weight,
             'tsmamba': tsmamba_weight,
@@ -109,11 +179,15 @@ class MetaLearningEnsemble:
             'tft': tft_weight
         }
         
+        # Add multi-resolution weight if enabled
+        if self.enable_multi_resolution:
+            self.weights['multi_resolution'] = multi_resolution_weight
+        
         # Normalize weights
         total_weight = sum(self.weights.values())
         self.weights = {k: v/total_weight for k, v in self.weights.items()}
         
-        # Performance tracking (now 4 models)
+        # Performance tracking (now 4 models + multi-resolution)
         self.performance_history = {
             'timesfm': [],
             'tsmamba': [],
@@ -121,6 +195,10 @@ class MetaLearningEnsemble:
             'tft': [],
             'ensemble': []
         }
+        
+        # Add multi-resolution performance tracking
+        if self.enable_multi_resolution:
+            self.performance_history['multi_resolution'] = []
         
         # Enhanced prediction cache with TTL and memory management
         self.prediction_cache = {}
@@ -179,7 +257,9 @@ class MetaLearningEnsemble:
                 self.enable_neural_meta_learning = False
                 self.enable_online_learning = False
         
+        multi_res_status = "enabled" if self.enable_multi_resolution else "disabled"
         logger.info(f"Ensemble initialized with weights: {self.weights}")
+        logger.info(f"Multi-resolution prediction system: {multi_res_status}")
     
     def fit_uncertainty_model(
         self,
@@ -428,6 +508,13 @@ class MetaLearningEnsemble:
                 samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
                 tft_pred = self.tft.predict(primary_df, ticker, return_confidence)
                 
+                # Get multi-resolution predictions if enabled
+                multi_resolution_pred = None
+                if self.enable_multi_resolution and self.multi_resolution_predictors:
+                    multi_resolution_pred = self._get_multi_resolution_predictions(
+                        primary_df, ticker, return_confidence
+                    )
+                
             except Exception as e:
                 if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
                     logger.warning(f"GPU memory issue during prediction for {ticker}: {e}")
@@ -439,6 +526,13 @@ class MetaLearningEnsemble:
                     tsmamba_pred = self.tsmamba.predict(primary_df, ticker, return_confidence)
                     samba_pred = self.samba.predict(data_dict, ticker, return_confidence)
                     tft_pred = self.tft.predict(primary_df, ticker, return_confidence)
+                    
+                    # Retry multi-resolution predictions
+                    multi_resolution_pred = None
+                    if self.enable_multi_resolution and self.multi_resolution_predictors:
+                        multi_resolution_pred = self._get_multi_resolution_predictions(
+                            primary_df, ticker, return_confidence
+                        )
                 else:
                     raise e
             
@@ -450,11 +544,16 @@ class MetaLearningEnsemble:
                 
                 if (horizon_key in timesfm_pred and horizon_key in tsmamba_pred and 
                     horizon_key in samba_pred and horizon_key in tft_pred):
-                    # Extract individual predictions (4 models)
+                    # Extract individual predictions (4 models + multi-resolution)
                     timesfm_val = timesfm_pred[horizon_key]['prediction']
                     tsmamba_val = tsmamba_pred[horizon_key]['prediction']
                     samba_val = samba_pred[horizon_key]['prediction']
                     tft_val = tft_pred[horizon_key]['prediction']
+                    
+                    # Extract multi-resolution prediction if available
+                    multi_resolution_val = None
+                    if multi_resolution_pred and horizon_key in multi_resolution_pred:
+                        multi_resolution_val = multi_resolution_pred[horizon_key]['prediction']
                     
                     # Apply regime-adaptive weighting
                     adapted_weights = self._adapt_weights_for_regime(
@@ -464,7 +563,7 @@ class MetaLearningEnsemble:
                         horizon=horizon
                     )
                     
-                    # Weighted ensemble prediction with regime adaptation (4 models)
+                    # Weighted ensemble prediction with regime adaptation (4 models + multi-resolution)
                     raw_ensemble_pred = (
                         adapted_weights['timesfm'] * timesfm_val +
                         adapted_weights['tsmamba'] * tsmamba_val +
@@ -472,12 +571,16 @@ class MetaLearningEnsemble:
                         adapted_weights['tft'] * tft_val
                     )
                     
+                    # Add multi-resolution prediction if available
+                    if multi_resolution_val is not None and 'multi_resolution' in adapted_weights:
+                        raw_ensemble_pred += adapted_weights['multi_resolution'] * multi_resolution_val
+                    
                     # Apply financial sanity checks
                     ensemble_pred = self._apply_financial_sanity_checks(
                         raw_ensemble_pred, horizon, regime_state, ticker
                     )
                     
-                    # Combine confidence scores (4 models)
+                    # Combine confidence scores (4 models + multi-resolution)
                     timesfm_conf = timesfm_pred[horizon_key].get('confidence', 0.5)
                     tsmamba_conf = tsmamba_pred[horizon_key].get('confidence', 0.5)
                     samba_conf = samba_pred[horizon_key].get('confidence', 0.5)
@@ -490,6 +593,12 @@ class MetaLearningEnsemble:
                         adapted_weights['samba'] * samba_conf +
                         adapted_weights['tft'] * tft_conf
                     )
+                    
+                    # Add multi-resolution confidence if available
+                    if multi_resolution_pred and horizon_key in multi_resolution_pred:
+                        multi_resolution_conf = multi_resolution_pred[horizon_key].get('confidence', 0.5)
+                        if 'multi_resolution' in adapted_weights:
+                            base_conf += adapted_weights['multi_resolution'] * multi_resolution_conf
                     
                     # Adjust confidence based on regime uncertainty
                     regime_conf_adjustment = adaptation_factors['confidence_threshold_adjustment']
@@ -747,6 +856,227 @@ class MetaLearningEnsemble:
             result[f"horizon_{horizon}"] = self._fallback_prediction(horizon)
         return result
     
+    def _get_multi_resolution_predictions(
+        self,
+        df: pd.DataFrame,
+        ticker: str,
+        return_confidence: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get multi-resolution predictions and fuse them.
+        
+        Args:
+            df: Historical OHLCV data
+            ticker: Stock ticker symbol
+            return_confidence: Whether to return confidence estimates
+            
+        Returns:
+            Fused multi-resolution predictions or None if failed
+        """
+        try:
+            # Get predictions from each resolution predictor
+            minute_predictions = None
+            hourly_predictions = None
+            weekly_predictions = None
+            
+            # Minute-scale predictions (requires minute data)
+            if 'minute' in self.multi_resolution_predictors:
+                try:
+                    minute_predictions = self.multi_resolution_predictors['minute'].predict(
+                        df, ticker, return_confidence
+                    )
+                except Exception as e:
+                    logger.debug(f"Minute predictor failed for {ticker}: {e}")
+            
+            # Hourly predictions (resample daily to hourly if needed)
+            if 'hourly' in self.multi_resolution_predictors:
+                try:
+                    # For daily data, approximate hourly patterns
+                    hourly_predictions = self.multi_resolution_predictors['hourly'].predict(
+                        df, ticker, return_confidence
+                    )
+                except Exception as e:
+                    logger.debug(f"Hourly predictor failed for {ticker}: {e}")
+            
+            # Weekly predictions
+            if 'weekly' in self.multi_resolution_predictors:
+                try:
+                    weekly_predictions = self.multi_resolution_predictors['weekly'].predict(
+                        df, ticker, return_confidence
+                    )
+                except Exception as e:
+                    logger.debug(f"Weekly predictor failed for {ticker}: {e}")
+            
+            # If no predictions available, return None
+            if not any([minute_predictions, hourly_predictions, weekly_predictions]):
+                logger.debug(f"No multi-resolution predictions available for {ticker}")
+                return None
+            
+            # Create market context for fusion
+            market_context = self._create_market_context(df, ticker)
+            
+            # Fuse predictions using resolution fusion network
+            if self.resolution_fuser:
+                try:
+                    fused_predictions = self.resolution_fuser.fuse_predictions(
+                        minute_predictions=minute_predictions,
+                        hourly_predictions=hourly_predictions,
+                        weekly_predictions=weekly_predictions,
+                        market_context=market_context
+                    )
+                    
+                    # Update adaptive weighting with performance feedback
+                    if self.adaptive_weighting:
+                        try:
+                            adaptive_weights = self.adaptive_weighting.compute_adaptive_weights(
+                                market_data=df,
+                                current_time=datetime.now(),
+                                volatility=df['close'].pct_change().std() * np.sqrt(252) if len(df) > 1 else 0.02
+                            )
+                            
+                            # Apply adaptive weights to fused predictions
+                            fused_predictions = self._apply_adaptive_weights_to_predictions(
+                                fused_predictions, adaptive_weights
+                            )
+                        except Exception as e:
+                            logger.debug(f"Adaptive weighting failed for {ticker}: {e}")
+                    
+                    return fused_predictions
+                    
+                except Exception as e:
+                    logger.warning(f"Resolution fusion failed for {ticker}: {e}")
+            
+            # Fallback: simple averaging of available predictions
+            return self._simple_multi_resolution_fusion(
+                minute_predictions, hourly_predictions, weekly_predictions
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in multi-resolution predictions for {ticker}: {e}")
+            return None
+    
+    def _create_market_context(self, df: pd.DataFrame, ticker: str) -> Dict[str, Any]:
+        """Create market context for resolution fusion."""
+        try:
+            if len(df) < 20:
+                return {}
+            
+            returns = df['close'].pct_change().dropna()
+            
+            context = {
+                'volatility_regime': min(returns.std() * 5, 1.0),  # Normalized volatility
+                'trend_strength': 0.0,
+                'market_breadth': 0.5,
+                'sector_rotation': 0.5,
+                'economic_cycle': 0.5,
+                'seasonal_factor': np.sin(2 * np.pi * datetime.now().timetuple().tm_yday / 365),
+                'earnings_season': 0.0,
+                'fed_cycle': 0.5,
+                'geopolitical_stress': 0.0,
+                'liquidity_condition': 0.5
+            }
+            
+            # Calculate trend strength
+            if len(df) >= 20:
+                sma_short = df['close'].rolling(5).mean()
+                sma_long = df['close'].rolling(20).mean()
+                trend_strength = (sma_short.iloc[-1] - sma_long.iloc[-1]) / sma_long.iloc[-1]
+                context['trend_strength'] = max(-1, min(1, trend_strength))
+            
+            return context
+            
+        except Exception as e:
+            logger.debug(f"Error creating market context for {ticker}: {e}")
+            return {}
+    
+    def _apply_adaptive_weights_to_predictions(
+        self,
+        predictions: Dict[str, Any],
+        adaptive_weights: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Apply adaptive weights to fused predictions."""
+        try:
+            if 'final_weights' not in adaptive_weights:
+                return predictions
+            
+            weights = adaptive_weights['final_weights']
+            
+            # Apply weights to enhance or reduce confidence based on resolution performance
+            for horizon_key in predictions:
+                if horizon_key.startswith('horizon_') and horizon_key in predictions:
+                    pred_data = predictions[horizon_key]
+                    
+                    # Adjust confidence based on resolution weights
+                    base_confidence = pred_data.get('confidence', 0.5)
+                    
+                    # Weight-based confidence adjustment
+                    weight_factor = sum(weights.values()) / len(weights)  # Average weight
+                    adjusted_confidence = base_confidence * (0.8 + 0.4 * weight_factor)
+                    
+                    pred_data['confidence'] = max(0.1, min(0.95, adjusted_confidence))
+                    pred_data['adaptive_weights_applied'] = True
+            
+            return predictions
+            
+        except Exception as e:
+            logger.debug(f"Error applying adaptive weights: {e}")
+            return predictions
+    
+    def _simple_multi_resolution_fusion(
+        self,
+        minute_pred: Optional[Dict],
+        hourly_pred: Optional[Dict],
+        weekly_pred: Optional[Dict]
+    ) -> Dict[str, Any]:
+        """Simple fallback fusion when sophisticated fusion fails."""
+        try:
+            available_preds = [p for p in [minute_pred, hourly_pred, weekly_pred] if p is not None]
+            
+            if not available_preds:
+                return {}
+            
+            fused_result = {}
+            
+            # Get all horizons from available predictions
+            all_horizons = set()
+            for pred in available_preds:
+                all_horizons.update([k for k in pred.keys() if k.startswith('horizon_')])
+            
+            for horizon_key in all_horizons:
+                horizon_predictions = []
+                horizon_confidences = []
+                
+                for pred in available_preds:
+                    if horizon_key in pred:
+                        horizon_predictions.append(pred[horizon_key]['prediction'])
+                        horizon_confidences.append(pred[horizon_key].get('confidence', 0.5))
+                
+                if horizon_predictions:
+                    # Simple average
+                    avg_prediction = np.mean(horizon_predictions)
+                    avg_confidence = np.mean(horizon_confidences)
+                    
+                    # Estimate prediction interval
+                    pred_std = np.std(horizon_predictions) if len(horizon_predictions) > 1 else 0.02
+                    interval_width = pred_std * 2
+                    
+                    fused_result[horizon_key] = {
+                        'prediction': float(avg_prediction),
+                        'confidence': float(avg_confidence),
+                        'prediction_interval': [
+                            float(avg_prediction - interval_width),
+                            float(avg_prediction + interval_width)
+                        ],
+                        'model_type': 'simple_multi_resolution_fusion',
+                        'n_resolutions_used': len(horizon_predictions)
+                    }
+            
+            return fused_result
+            
+        except Exception as e:
+            logger.error(f"Error in simple multi-resolution fusion: {e}")
+            return {}
+    
     def _adapt_weights_for_regime(
         self, 
         regime_state, 
@@ -820,13 +1150,16 @@ class MetaLearningEnsemble:
             regime = regime_state.regime
             base_weights = self.weights.copy()
             
-            # Regime-specific model preferences (4 models)
+            # Regime-specific model preferences (4 models + multi-resolution)
             if regime == MarketRegime.BULL_TREND:
                 # In bull markets, favor TimesFM (trend following) and TFT (temporal patterns)
                 base_weights['timesfm'] *= 1.2
                 base_weights['tft'] *= 1.15  # TFT good at temporal trends
                 base_weights['samba'] *= 1.05
                 base_weights['tsmamba'] *= 0.9
+                # Multi-resolution helps capture trend consistency across scales
+                if 'multi_resolution' in base_weights:
+                    base_weights['multi_resolution'] *= 1.1
                 
             elif regime == MarketRegime.BEAR_TREND:
                 # In bear markets, favor TSMamba (pattern recognition) and TFT (uncertainty)
@@ -834,6 +1167,9 @@ class MetaLearningEnsemble:
                 base_weights['tft'] *= 1.2  # TFT has native uncertainty estimation
                 base_weights['timesfm'] *= 0.8
                 base_weights['samba'] *= 0.85
+                # Multi-resolution less useful in bear markets due to correlation breakdown
+                if 'multi_resolution' in base_weights:
+                    base_weights['multi_resolution'] *= 0.9
                 
             elif regime == MarketRegime.HIGH_VOLATILITY:
                 # In volatile markets, favor TFT (uncertainty) and TSMamba (pattern recognition)
@@ -841,6 +1177,9 @@ class MetaLearningEnsemble:
                 base_weights['tsmamba'] *= 1.1
                 base_weights['samba'] *= 1.05  # SAMBA for correlation breaks
                 base_weights['timesfm'] *= 0.8
+                # Multi-resolution very valuable in volatile markets (different scales matter)
+                if 'multi_resolution' in base_weights:
+                    base_weights['multi_resolution'] *= 1.25
                 
             elif regime == MarketRegime.SIDEWAYS:
                 # In sideways markets, favor TSMamba and TFT for pattern recognition
@@ -848,6 +1187,9 @@ class MetaLearningEnsemble:
                 base_weights['tft'] *= 1.1  # TFT good at temporal patterns
                 base_weights['timesfm'] *= 0.85
                 base_weights['samba'] *= 0.95
+                # Multi-resolution helps identify breakout patterns
+                if 'multi_resolution' in base_weights:
+                    base_weights['multi_resolution'] *= 1.05
             
             # Normalize weights
             total_weight = sum(base_weights.values())
