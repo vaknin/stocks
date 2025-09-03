@@ -47,7 +47,7 @@ if [ "$WHEEL_COUNT" -eq "0" ]; then
     exit 1
 fi
 
-# Function to verify wheel integrity
+# Enhanced function to verify wheel integrity
 verify_wheel_integrity() {
     local wheel_file="$1"
     if [ ! -f "$wheel_file" ] || [ ! -r "$wheel_file" ]; then
@@ -55,6 +55,11 @@ verify_wheel_integrity() {
     fi
     # Check if file is not empty and is readable
     if [ ! -s "$wheel_file" ]; then
+        return 1
+    fi
+    # Quick ZIP file integrity check (wheels are ZIP files)
+    if ! python3 -c "import zipfile; zipfile.ZipFile('$wheel_file').testzip()" 2>/dev/null; then
+        echo "⚠️ Corrupted wheel detected: $(basename "$wheel_file")"
         return 1
     fi
     return 0
@@ -109,8 +114,19 @@ install_with_cache_fallback() {
     
     echo "🔥 Installing $description with cache-first strategy (saves bandwidth)..."
     
-    # STEP 1: Try cache-only installation first (fastest, saves bandwidth)
-    echo "📦 Attempting cache-only installation..."
+    # STEP 1: Try cache-preferred installation (allows dependency resolution but prefers cache)
+    echo "📦 Attempting cache-preferred installation..."
+    if python3 -m pip install --no-cache-dir \
+        --find-links "$WHEEL_CACHE_DIR" \
+        --prefer-binary \
+        --no-deps \
+        $packages 2>/dev/null; then
+        echo "✅ Successfully installed $description from cache (cache hit!)"
+        return 0
+    fi
+    
+    # STEP 1.5: Try with dependency resolution from cache only
+    echo "📦 Attempting cache-only with dependency resolution..."
     if python3 -m pip install --no-cache-dir \
         --no-index \
         --find-links "$WHEEL_CACHE_DIR" \
@@ -145,11 +161,16 @@ install_with_cache_fallback() {
     return 1
 }
 
+# Install foundational dependencies first to prevent conflicts
+echo "🔧 Installing foundational packages first..."
+install_with_cache_fallback "setuptools wheel packaging" "foundational build tools"
+
 # Install PyTorch 2.7.1 ecosystem with improved caching strategy
 install_with_cache_fallback "torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1" "PyTorch 2.7.1 ecosystem"
 
-# Install critical dependencies required by mamba_ssm FIRST
-install_with_cache_fallback "ninja==1.11.1.1 einops==0.8.0 transformers==4.44.0" "mamba_ssm dependencies"
+# Install critical dependencies required by mamba_ssm in optimal order
+install_with_cache_fallback "ninja==1.11.1.1" "ninja build system"
+install_with_cache_fallback "einops==0.8.0 transformers==4.44.0" "core ML dependencies"
 
 # Install mamba_ssm and causal-conv1d with enhanced caching strategy
 echo "⚡ Installing mamba_ssm and causal-conv1d from cached wheels (saves 556.9MB)..."

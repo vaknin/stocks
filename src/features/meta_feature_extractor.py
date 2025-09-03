@@ -506,7 +506,7 @@ class MetaFeatureExtractor:
                         features.append(min(pred_range, 1.0))  # Cap at 1.0
                     else:
                         features.extend([1.0, 0.0])  # Perfect agreement, no range
-                else:
+                except Exception:
                     features.extend([1.0, 0.0])  # Default values
             else:
                 features.extend([1.0, 0.0])  # Default values
