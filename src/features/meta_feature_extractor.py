@@ -8,7 +8,12 @@ import warnings
 from loguru import logger
 from collections import deque
 
-
+from .technical_feature_generator import TechnicalFeatureGenerator
+from .microstructure_features import MicrostructureFeatureExtractor
+from .cross_asset_features import CrossAssetFeatureExtractor
+from .volatility_regime_features import VolatilityRegimeDetector
+from .sentiment_features import SentimentAnalyzer
+from .feature_selection_pipeline import FeatureSelector
 from ..config.settings import config
 
 class MetaFeatureExtractor:
@@ -18,19 +23,59 @@ class MetaFeatureExtractor:
         self,
         lookback_window: int = 60,
         performance_window: int = 20,
-        volatility_window: int = 20
+        volatility_window: int = 20,
+        enable_feature_selection: bool = True
     ):
         """
-        Initialize meta-feature extractor.
+        Initialize meta-feature extractor with Phase 6 feature generators.
         
         Args:
             lookback_window: Historical data window for feature calculation
             performance_window: Window for model performance tracking
             volatility_window: Window for volatility calculations
+            enable_feature_selection: Whether to use automated feature selection
         """
         self.lookback_window = lookback_window
         self.performance_window = performance_window
         self.volatility_window = volatility_window
+        self.enable_feature_selection = enable_feature_selection
+        
+        # Initialize Phase 6 feature generators
+        self.technical_generator = TechnicalFeatureGenerator(
+            lookback_window=lookback_window,
+            volatility_window=volatility_window
+        )
+        
+        self.microstructure_extractor = MicrostructureFeatureExtractor(
+            tick_window=1000,
+            volume_profile_bins=20
+        )
+        
+        self.cross_asset_extractor = CrossAssetFeatureExtractor(
+            correlation_window=60,
+            spillover_lag=5
+        )
+        
+        self.volatility_detector = VolatilityRegimeDetector(
+            short_window=10,
+            long_window=60,
+            regime_threshold=1.5
+        )
+        
+        self.sentiment_analyzer = SentimentAnalyzer(
+            sentiment_window=20,
+            momentum_window=10
+        )
+        
+        # Feature selector for redundancy removal and optimization
+        if self.enable_feature_selection:
+            self.feature_selector = FeatureSelector(
+                method='hybrid',
+                max_features=50,
+                correlation_threshold=0.95
+            )
+        else:
+            self.feature_selector = None
         
         # Model performance tracking (including multi-resolution)
         self.model_performance_history = {
@@ -46,7 +91,13 @@ class MetaFeatureExtractor:
         self.feature_cache = {}
         self.cache_timestamps = {}
         
-        logger.info(f"MetaFeatureExtractor initialized with lookback={lookback_window}, performance_window={performance_window}")
+        # Phase 6 feature cache (expensive to compute)
+        self.phase6_feature_cache = {}
+        self.phase6_cache_timestamps = {}
+        
+        logger.info(f"Enhanced MetaFeatureExtractor initialized with lookback={lookback_window}, performance_window={performance_window}")
+        logger.info(f"Phase 6 features enabled: technical, microstructure, cross-asset, volatility regimes, sentiment")
+        logger.info(f"Feature selection enabled: {enable_feature_selection}")
     
     def extract_regime_features(
         self,
@@ -572,16 +623,133 @@ class MetaFeatureExtractor:
             # Return default feature vector
             return np.zeros(32, dtype=np.float32)
     
+    def extract_phase6_features(
+        self,
+        price_data: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
+        ticker: str,
+        multi_asset_data: Optional[Dict[str, pd.DataFrame]] = None
+    ) -> Dict[str, np.ndarray]:
+        """
+        Extract Phase 6 dynamic features (technical, microstructure, cross-asset, volatility, sentiment).
+        
+        Args:
+            price_data: Primary stock price data
+            ticker: Stock ticker symbol
+            multi_asset_data: Multi-asset data for cross-asset features
+            
+        Returns:
+            Dictionary of feature arrays from each Phase 6 component
+        """
+        try:
+            # Use caching for expensive Phase 6 features (5-minute TTL)
+            cache_key = f"phase6_{ticker}_{hash(str(price_data.index[-1] if hasattr(price_data, 'index') else 'no_index'))}"
+            current_time = datetime.now()
+            
+            if (cache_key in self.phase6_feature_cache and 
+                cache_key in self.phase6_cache_timestamps and
+                (current_time - self.phase6_cache_timestamps[cache_key]).seconds < 300):
+                return self.phase6_feature_cache[cache_key]
+            
+            phase6_features = {}
+            
+            # Get primary DataFrame
+            if isinstance(price_data, dict):
+                primary_df = price_data.get(ticker, next(iter(price_data.values())))
+            else:
+                primary_df = price_data
+            
+            # 1. Technical Features
+            try:
+                technical_features = self.technical_generator.generate_features(
+                    price_data=primary_df,
+                    regime_state=None,  # Will be provided by ensemble
+                    market_context={'ticker': ticker}
+                )
+                phase6_features['technical'] = technical_features
+                logger.debug(f"Extracted {len(technical_features)} technical features for {ticker}")
+            except Exception as e:
+                logger.warning(f"Technical feature extraction failed for {ticker}: {e}")
+                phase6_features['technical'] = np.zeros(20, dtype=np.float32)
+            
+            # 2. Microstructure Features (approximated from OHLCV)
+            try:
+                microstructure_features = self.microstructure_extractor.extract_features(
+                    ohlcv_data=primary_df,
+                    tick_data=None  # Using OHLCV approximation
+                )
+                phase6_features['microstructure'] = microstructure_features
+                logger.debug(f"Extracted {len(microstructure_features)} microstructure features for {ticker}")
+            except Exception as e:
+                logger.warning(f"Microstructure feature extraction failed for {ticker}: {e}")
+                phase6_features['microstructure'] = np.zeros(15, dtype=np.float32)
+            
+            # 3. Cross-Asset Features
+            try:
+                if multi_asset_data and len(multi_asset_data) > 1:
+                    cross_asset_features = self.cross_asset_extractor.extract_features(
+                        multi_asset_data=multi_asset_data,
+                        target_ticker=ticker
+                    )
+                else:
+                    cross_asset_features = self.cross_asset_extractor.extract_features(
+                        multi_asset_data={ticker: primary_df},
+                        target_ticker=ticker
+                    )
+                phase6_features['cross_asset'] = cross_asset_features
+                logger.debug(f"Extracted {len(cross_asset_features)} cross-asset features for {ticker}")
+            except Exception as e:
+                logger.warning(f"Cross-asset feature extraction failed for {ticker}: {e}")
+                phase6_features['cross_asset'] = np.zeros(12, dtype=np.float32)
+            
+            # 4. Volatility Regime Features
+            try:
+                volatility_features = self.volatility_detector.extract_features(
+                    price_data=primary_df,
+                    return_regime_info=True
+                )
+                phase6_features['volatility_regime'] = volatility_features
+                logger.debug(f"Extracted {len(volatility_features)} volatility regime features for {ticker}")
+            except Exception as e:
+                logger.warning(f"Volatility regime feature extraction failed for {ticker}: {e}")
+                phase6_features['volatility_regime'] = np.zeros(10, dtype=np.float32)
+            
+            # 5. Sentiment Features
+            try:
+                sentiment_features = self.sentiment_analyzer.extract_features(
+                    ticker=ticker,
+                    price_data=primary_df
+                )
+                phase6_features['sentiment'] = sentiment_features
+                logger.debug(f"Extracted {len(sentiment_features)} sentiment features for {ticker}")
+            except Exception as e:
+                logger.warning(f"Sentiment feature extraction failed for {ticker}: {e}")
+                phase6_features['sentiment'] = np.zeros(18, dtype=np.float32)
+            
+            # Cache results
+            self.phase6_feature_cache[cache_key] = phase6_features
+            self.phase6_cache_timestamps[cache_key] = current_time
+            
+            # Clean old cache entries
+            self._clean_phase6_cache()
+            
+            return phase6_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting Phase 6 features for {ticker}: {e}")
+            return self._get_default_phase6_features()
+    
     def extract_combined_features(
         self,
         price_data: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
         regime_state: Optional[Any] = None,
         recent_predictions: Optional[Dict[str, List[float]]] = None,
         recent_actuals: Optional[List[float]] = None,
-        horizon: int = 1
+        horizon: int = 1,
+        ticker: str = "UNKNOWN",
+        multi_asset_data: Optional[Dict[str, pd.DataFrame]] = None
     ) -> np.ndarray:
         """
-        Extract complete set of meta-features for neural meta-learning.
+        Extract complete set of meta-features for neural meta-learning including Phase 6 features.
         
         Args:
             price_data: Price data (single stock or multi-stock)
@@ -589,13 +757,15 @@ class MetaFeatureExtractor:
             recent_predictions: Recent model predictions
             recent_actuals: Recent actual returns
             horizon: Prediction horizon
+            ticker: Stock ticker symbol
+            multi_asset_data: Multi-asset data for cross-asset features
             
         Returns:
-            Combined feature array
+            Combined feature array with Phase 6 enhancements
         """
         try:
             # Cache key for efficiency
-            cache_key = f"{hash(str(price_data.index[-1] if hasattr(price_data, 'index') else 'no_index'))}_{horizon}"
+            cache_key = f"{ticker}_{hash(str(price_data.index[-1] if hasattr(price_data, 'index') else 'no_index'))}_{horizon}"
             current_time = datetime.now()
             
             # Check cache (valid for 1 minute)
@@ -604,7 +774,7 @@ class MetaFeatureExtractor:
                 (current_time - self.cache_timestamps[cache_key]).seconds < 60):
                 return self.feature_cache[cache_key]
             
-            # Extract regime features
+            # Extract original features
             regime_features = self.extract_regime_features(price_data, regime_state)
             
             # Extract model performance features
@@ -618,8 +788,46 @@ class MetaFeatureExtractor:
             # Extract multi-resolution features
             multi_resolution_features = self.extract_multi_resolution_features(price_data)
             
+            # Extract Phase 6 features
+            phase6_feature_dict = self.extract_phase6_features(
+                price_data=price_data,
+                ticker=ticker,
+                multi_asset_data=multi_asset_data or (price_data if isinstance(price_data, dict) else None)
+            )
+            
+            # Concatenate Phase 6 features
+            phase6_features = np.concatenate([
+                phase6_feature_dict['technical'],
+                phase6_feature_dict['microstructure'],
+                phase6_feature_dict['cross_asset'],
+                phase6_feature_dict['volatility_regime'],
+                phase6_feature_dict['sentiment']
+            ])
+            
             # Combine all features
-            combined_features = np.concatenate([regime_features, performance_features, multi_resolution_features])
+            all_features = [
+                regime_features,
+                performance_features,
+                multi_resolution_features,
+                phase6_features
+            ]
+            
+            combined_features = np.concatenate(all_features)
+            
+            # Apply feature selection if enabled and fitted
+            if (self.feature_selector is not None and 
+                hasattr(self.feature_selector, 'is_fitted_') and 
+                self.feature_selector.is_fitted_):
+                
+                try:
+                    # Reshape for sklearn compatibility
+                    features_2d = combined_features.reshape(1, -1)
+                    selected_features = self.feature_selector.transform(features_2d)
+                    combined_features = selected_features.flatten()
+                    
+                except Exception as e:
+                    logger.debug(f"Feature selection transform failed: {e}")
+                    # Continue with original features
             
             # Normalize features to reasonable range
             combined_features = np.tanh(combined_features)  # Squash to [-1, 1]
@@ -631,13 +839,13 @@ class MetaFeatureExtractor:
             # Clean old cache entries
             self._clean_cache()
             
-            logger.debug(f"Extracted {len(combined_features)} meta-features for horizon {horizon}")
+            logger.debug(f"Extracted {len(combined_features)} enhanced meta-features for {ticker} horizon {horizon}")
             
             return combined_features
             
         except Exception as e:
-            logger.error(f"Error extracting combined features: {e}")
-            return self._get_default_combined_features()
+            logger.error(f"Error extracting enhanced combined features: {e}")
+            return self._get_default_enhanced_combined_features()
     
     def _get_default_regime_features(self) -> np.ndarray:
         """Get default regime features when extraction fails."""
@@ -685,6 +893,47 @@ class MetaFeatureExtractor:
         for key in keys_to_remove:
             self.feature_cache.pop(key, None)
             self.cache_timestamps.pop(key, None)
+    
+    def _clean_phase6_cache(self) -> None:
+        """Clean old Phase 6 cache entries."""
+        current_time = datetime.now()
+        keys_to_remove = []
+        
+        for key, timestamp in self.phase6_cache_timestamps.items():
+            if (current_time - timestamp).seconds > 600:  # Remove entries older than 10 minutes
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            self.phase6_feature_cache.pop(key, None)
+            self.phase6_cache_timestamps.pop(key, None)
+    
+    def _get_default_phase6_features(self) -> Dict[str, np.ndarray]:
+        """Get default Phase 6 features when extraction fails."""
+        return {
+            'technical': np.zeros(20, dtype=np.float32),
+            'microstructure': np.zeros(15, dtype=np.float32),
+            'cross_asset': np.zeros(12, dtype=np.float32),
+            'volatility_regime': np.zeros(10, dtype=np.float32),
+            'sentiment': np.zeros(18, dtype=np.float32)
+        }
+    
+    def _get_default_enhanced_combined_features(self) -> np.ndarray:
+        """Get default enhanced combined features when extraction fails."""
+        regime_features = self._get_default_regime_features()
+        performance_features = self._get_default_performance_features()
+        multi_resolution_features = np.zeros(32, dtype=np.float32)
+        
+        # Default Phase 6 features
+        phase6_dict = self._get_default_phase6_features()
+        phase6_features = np.concatenate([
+            phase6_dict['technical'],
+            phase6_dict['microstructure'],
+            phase6_dict['cross_asset'],
+            phase6_dict['volatility_regime'],
+            phase6_dict['sentiment']
+        ])
+        
+        return np.concatenate([regime_features, performance_features, multi_resolution_features, phase6_features])
     
     def get_feature_names(self) -> List[str]:
         """Get names of all extracted features."""
@@ -749,3 +998,117 @@ class MetaFeatureExtractor:
         feature_stats['model_performance_summary'] = performance_summary
         
         return feature_stats
+    
+    def fit_feature_selector(
+        self,
+        training_data: List[Dict[str, pd.DataFrame]],
+        target_returns: List[np.ndarray],
+        tickers: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Fit the feature selector on training data.
+        
+        Args:
+            training_data: List of multi-asset price data dictionaries
+            target_returns: List of target return arrays
+            tickers: List of primary ticker symbols
+            
+        Returns:
+            Feature selection fitting results
+        """
+        if not self.enable_feature_selection or self.feature_selector is None:
+            return {'feature_selection_enabled': False}
+        
+        try:
+            logger.info("Fitting feature selector on training data...")
+            
+            # Extract features for training samples
+            X_features = []
+            y_targets = []
+            
+            for data_dict, returns, ticker in zip(training_data, target_returns, tickers):
+                try:
+                    # Extract enhanced features
+                    features = self.extract_combined_features(
+                        price_data=data_dict,
+                        ticker=ticker,
+                        multi_asset_data=data_dict
+                    )
+                    
+                    if len(returns) > 0:
+                        X_features.append(features)
+                        y_targets.append(returns[0] if len(returns) > 0 else 0.0)  # Use first return
+                        
+                except Exception as e:
+                    logger.debug(f"Error extracting features for {ticker}: {e}")
+                    continue
+            
+            if len(X_features) < 10:
+                logger.warning(f"Insufficient training samples for feature selection: {len(X_features)}")
+                return {'error': 'insufficient_training_data'}
+            
+            # Convert to arrays
+            X = np.array(X_features)
+            y = np.array(y_targets)
+            
+            # Fit feature selector
+            self.feature_selector.fit(X, y)
+            
+            # Get selection results
+            selected_features = self.feature_selector.get_selected_features()
+            feature_scores = self.feature_selector.get_feature_scores() if hasattr(self.feature_selector, 'get_feature_scores') else None
+            
+            results = {
+                'feature_selection_enabled': True,
+                'n_training_samples': len(X_features),
+                'n_original_features': X.shape[1],
+                'n_selected_features': len(selected_features),
+                'selected_feature_indices': selected_features.tolist() if hasattr(selected_features, 'tolist') else selected_features,
+                'feature_reduction_ratio': len(selected_features) / X.shape[1]
+            }
+            
+            if feature_scores is not None:
+                results['feature_scores'] = feature_scores.tolist() if hasattr(feature_scores, 'tolist') else feature_scores
+            
+            logger.info(f"Feature selector fitted: {X.shape[1]} -> {len(selected_features)} features ({results['feature_reduction_ratio']:.2%} retention)")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error fitting feature selector: {e}")
+            return {'error': str(e)}
+    
+    def get_phase6_feature_summary(self) -> Dict[str, Any]:
+        """Get summary of Phase 6 feature extraction status."""
+        return {
+            'technical_generator': {
+                'enabled': self.technical_generator is not None,
+                'lookback_window': self.lookback_window if hasattr(self, 'technical_generator') else None
+            },
+            'microstructure_extractor': {
+                'enabled': self.microstructure_extractor is not None,
+                'feature_count': 15
+            },
+            'cross_asset_extractor': {
+                'enabled': self.cross_asset_extractor is not None,
+                'correlation_window': 60 if hasattr(self, 'cross_asset_extractor') else None
+            },
+            'volatility_detector': {
+                'enabled': self.volatility_detector is not None,
+                'short_window': 10 if hasattr(self, 'volatility_detector') else None,
+                'long_window': 60 if hasattr(self, 'volatility_detector') else None
+            },
+            'sentiment_analyzer': {
+                'enabled': self.sentiment_analyzer is not None,
+                'sentiment_window': 20 if hasattr(self, 'sentiment_analyzer') else None
+            },
+            'feature_selector': {
+                'enabled': self.enable_feature_selection,
+                'fitted': (hasattr(self.feature_selector, 'is_fitted_') and 
+                          self.feature_selector.is_fitted_) if self.feature_selector else False
+            },
+            'cache_stats': {
+                'phase6_cache_entries': len(self.phase6_feature_cache),
+                'regular_cache_entries': len(self.feature_cache)
+            }
+        }

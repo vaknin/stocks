@@ -215,15 +215,16 @@ class MetaLearningEnsemble:
             try:
                 logger.info("Initializing neural meta-learning components...")
                 
-                # Initialize meta-feature extractor
+                # Initialize enhanced meta-feature extractor with Phase 6 features
                 self.feature_extractor = MetaFeatureExtractor(
                     lookback_window=60,
                     performance_window=performance_window,
-                    volatility_window=20
+                    volatility_window=20,
+                    enable_feature_selection=True
                 )
                 
-                # Calculate meta-feature dimension
-                dummy_features = self.feature_extractor._get_default_combined_features()
+                # Calculate meta-feature dimension (using enhanced features)
+                dummy_features = self.feature_extractor._get_default_enhanced_combined_features()
                 meta_feature_dim = len(dummy_features)
                 
                 # Initialize neural meta-learner (now 4 models: TimesFM, TSMamba, SAMBA, TFT)
@@ -1093,11 +1094,13 @@ class MetaLearningEnsemble:
                 price_data is not None):
                 
                 try:
-                    # Extract meta-features
+                    # Extract enhanced meta-features with Phase 6 integration
                     meta_features = self.feature_extractor.extract_combined_features(
                         price_data=price_data,
                         regime_state=regime_state,
-                        horizon=horizon
+                        horizon=horizon,
+                        ticker=ticker,
+                        multi_asset_data=price_data if isinstance(price_data, dict) else None
                     )
                     
                     # Get neural weights
@@ -1345,6 +1348,54 @@ class MetaLearningEnsemble:
         except Exception as e:
             logger.warning(f"TFT training failed: {e}")
         
+        # Train feature selector if enabled
+        feature_selection_results = {}
+        if (self.enable_neural_meta_learning and 
+            self.feature_extractor is not None and 
+            hasattr(self.feature_extractor, 'fit_feature_selector')):
+            
+            try:
+                logger.info("Training feature selector on ensemble data...")
+                
+                # Prepare data for feature selector training
+                training_data_dict = []
+                target_returns_list = []
+                
+                for df, ticker in zip(train_data, train_tickers):
+                    # Convert to multi-asset format for cross-asset features
+                    data_dict = {ticker: df}
+                    training_data_dict.append(data_dict)
+                    
+                    # Calculate target returns for different horizons
+                    if len(df) > 25:
+                        returns = []
+                        for horizon in self.horizon_len:
+                            if len(df) > 20 + horizon:
+                                current_price = df['close'].iloc[-20-horizon]
+                                future_price = df['close'].iloc[-20]
+                                ret = (future_price - current_price) / current_price
+                                returns.append(ret)
+                        
+                        if returns:
+                            target_returns_list.append(returns)
+                        else:
+                            target_returns_list.append([0.0])  # Default
+                    else:
+                        target_returns_list.append([0.0])  # Default for insufficient data
+                
+                # Fit feature selector
+                feature_selection_results = self.feature_extractor.fit_feature_selector(
+                    training_data=training_data_dict,
+                    target_returns=target_returns_list,
+                    tickers=train_tickers
+                )
+                
+                logger.info(f"Feature selector training completed: {feature_selection_results}")
+                
+            except Exception as e:
+                logger.error(f"Feature selector training failed: {e}")
+                feature_selection_results = {'error': str(e)}
+        
         # Validate and update weights (4 models)
         validation_performance = {'timesfm': [], 'tsmamba': [], 'samba': [], 'tft': [], 'ensemble': []}
         
@@ -1391,7 +1442,8 @@ class MetaLearningEnsemble:
             'performance_metrics': final_metrics,
             'final_weights': self.weights.copy(),
             'training_samples': len(train_data),
-            'validation_samples': len(val_data)
+            'validation_samples': len(val_data),
+            'feature_selection_results': feature_selection_results
         }
     
     def update_online_learning(
@@ -1401,6 +1453,7 @@ class MetaLearningEnsemble:
         actual_return: float,
         model_weights: Dict[str, float],
         horizon: int,
+        ticker: str,
         regime_state: Optional[Any] = None
     ) -> None:
         """
@@ -1412,6 +1465,7 @@ class MetaLearningEnsemble:
             actual_return: Actual realized return
             model_weights: Model weights used
             horizon: Prediction horizon
+            ticker: Stock ticker symbol
             regime_state: Market regime state
         """
         if (self.enable_online_learning and 
@@ -1419,11 +1473,13 @@ class MetaLearningEnsemble:
             self.feature_extractor is not None):
             
             try:
-                # Extract meta-features
+                # Extract enhanced meta-features with Phase 6 integration
                 meta_features = self.feature_extractor.extract_combined_features(
                     price_data=price_data,
                     regime_state=regime_state,
-                    horizon=horizon
+                    horizon=horizon,
+                    ticker=ticker,
+                    multi_asset_data=price_data if isinstance(price_data, dict) else None
                 )
                 
                 # Add experience to online learner
@@ -1495,6 +1551,10 @@ class MetaLearningEnsemble:
         
         if self.feature_extractor is not None:
             status['feature_extractor'] = self.feature_extractor.get_feature_importance_summary()
+            
+            # Add Phase 6 feature status
+            if hasattr(self.feature_extractor, 'get_phase6_feature_summary'):
+                status['phase6_features'] = self.feature_extractor.get_phase6_feature_summary()
         
         if self.online_learner is not None:
             status['online_learner'] = self.online_learner.get_learning_statistics()
