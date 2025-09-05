@@ -12,8 +12,8 @@ from .technical_feature_generator import TechnicalFeatureGenerator
 from .microstructure_features import MicrostructureFeatureExtractor
 from .cross_asset_features import CrossAssetFeatureExtractor
 from .volatility_regime_features import VolatilityRegimeFeatureExtractor
-from .sentiment_features import SentimentAnalyzer
-from .feature_selection_pipeline import FeatureSelector
+from .sentiment_features import SentimentFeatureExtractor
+from .feature_selection_pipeline import FeatureSelectionPipeline
 from ..config.settings import config
 
 class MetaFeatureExtractor:
