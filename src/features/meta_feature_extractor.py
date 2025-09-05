@@ -11,7 +11,7 @@ from collections import deque
 from .technical_feature_generator import TechnicalFeatureGenerator
 from .microstructure_features import MicrostructureFeatureExtractor
 from .cross_asset_features import CrossAssetFeatureExtractor
-from .volatility_regime_features import VolatilityRegimeDetector
+from .volatility_regime_features import VolatilityRegimeFeatureExtractor
 from .sentiment_features import SentimentAnalyzer
 from .feature_selection_pipeline import FeatureSelector
 from ..config.settings import config
@@ -56,10 +56,13 @@ class MetaFeatureExtractor:
             spillover_lag=5
         )
         
-        self.volatility_detector = VolatilityRegimeDetector(
-            short_window=10,
-            long_window=60,
-            regime_threshold=1.5
+        self.volatility_detector = VolatilityRegimeFeatureExtractor(
+            volatility_windows=[5, 10, 20, 60],
+            regime_lookback=252,
+            gap_threshold=0.01,
+            enable_garch_modeling=True,
+            enable_regime_prediction=True,
+            max_regimes=4
         )
         
         self.sentiment_analyzer = SentimentAnalyzer(
@@ -704,8 +707,11 @@ class MetaFeatureExtractor:
             # 4. Volatility Regime Features
             try:
                 volatility_features = self.volatility_detector.extract_features(
-                    price_data=primary_df,
-                    return_regime_info=True
+                    df=primary_df,
+                    ticker=ticker,
+                    include_regime_features=True,
+                    include_gap_features=True,
+                    include_volatility_modeling=True
                 )
                 phase6_features['volatility_regime'] = volatility_features
                 logger.debug(f"Extracted {len(volatility_features)} volatility regime features for {ticker}")
