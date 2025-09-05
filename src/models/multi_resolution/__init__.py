@@ -14,7 +14,7 @@ Research foundation: AFRN-HyperFlow adaptive ensemble framework (2024).
 from .minute_scale_predictor import MinuteScalePredictor
 from .hourly_predictor import HourlyPredictor
 from .weekly_predictor import WeeklyPredictor
-from .resolution_fusion import ResolutionFusionNetwork
+from .resolution_fusion import ResolutionFusionNetwork, ResolutionFuser
 from .adaptive_resolution_weighting import AdaptiveResolutionWeighting
 
 __all__ = [
@@ -22,6 +22,7 @@ __all__ = [
     'HourlyPredictor', 
     'WeeklyPredictor',
     'ResolutionFusionNetwork',
+    'ResolutionFuser',
     'AdaptiveResolutionWeighting'
 ]
 
