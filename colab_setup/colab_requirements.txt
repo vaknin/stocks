@@ -114,10 +114,10 @@ psutil==6.0.0
 # ================================
 # PyTorch Geometric for graph neural networks - CUDA 12.1 compatible
 torch-geometric==2.6.1
-torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-torch-sparse==0.6.18 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-torch-cluster==1.6.3 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-torch-spline-conv==1.2.2 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.7.1+cu121.html
+torch-sparse==0.6.18 -f https://data.pyg.org/whl/torch-2.7.1+cu121.html
+torch-cluster==1.6.3 -f https://data.pyg.org/whl/torch-2.7.1+cu121.html
+torch-spline-conv==1.2.2 -f https://data.pyg.org/whl/torch-2.7.1+cu121.html
 
 # ================================
 # VERSION NOTES

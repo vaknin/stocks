@@ -116,16 +116,11 @@ python3 -m pip wheel \
     --wheel-dir="$TEMP_WHEEL_DIR" \
     --prefer-binary
 
-# Download direct wheel URLs first (mamba-ssm and causal-conv1d)
-echo "🔧 Downloading special packages with direct GitHub URLs..."
-
-echo "⬇️ Downloading causal-conv1d wheel (PyTorch 2.7 compatible)..."
-wget -P "$TEMP_WHEEL_DIR" https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.5.2/causal_conv1d-1.5.2+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl || echo "⚠️ causal-conv1d download failed"
-
-echo "⬇️ Downloading mamba-ssm wheel (PyTorch 2.7 compatible)..."
-wget -P "$TEMP_WHEEL_DIR" https://github.com/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl || echo "⚠️ mamba-ssm download failed"
-
-echo "✅ Special packages wheels downloaded"
+### Avoid duplicate downloads of GitHub wheels
+# We only cache GitHub wheels to persistent Drive once,
+# and exclude them from the main pip wheel pass.
+echo "🔧 Optimizing GitHub wheel handling to avoid duplicate downloads..."
+echo "✅ Will cache GitHub wheels to Drive and skip in main build"
 echo ""
 
 # OPTIMIZATION: Pre-cache GitHub direct URL wheels (556.9MB total)
@@ -229,11 +224,15 @@ done
 echo "✅ Heavy packages pre-cached"
 echo ""
 
-# Use pip wheel with --no-build-isolation to fix setup.py issues
+# Prepare filtered requirements that exclude direct GitHub wheels
+FILTERED_REQUIREMENTS="/tmp/colab_requirements_filtered.txt"
+grep -v "^https://github.com/" "$REQUIREMENTS_FILE" > "$FILTERED_REQUIREMENTS"
+
+# Use pip wheel with --no-build-isolation to fix setup.py issues on filtered requirements
 # Updated PyG index to match PyTorch 2.7
-python3 -m pip wheel -r "$REQUIREMENTS_FILE" --wheel-dir="$TEMP_WHEEL_DIR" \
+python3 -m pip wheel -r "$FILTERED_REQUIREMENTS" --wheel-dir="$TEMP_WHEEL_DIR" \
     --extra-index-url https://download.pytorch.org/whl/cu121 \
-    --extra-index-url https://data.pyg.org/whl/torch-2.7.0+cu121.html \
+    --extra-index-url https://data.pyg.org/whl/torch-2.7.1+cu121.html \
     --prefer-binary \
     --find-links "$TEMP_WHEEL_DIR" \
     --no-build-isolation || echo "⚠️ Some wheels failed to build - continuing with available wheels"
@@ -243,7 +242,8 @@ echo "✅ Wheel building process completed!"
 
 # Move wheels to persistent cache
 echo "💾 Moving wheels to persistent cache..."
-rsync -av "$TEMP_WHEEL_DIR/" "$WHEEL_CACHE_DIR/"
+# Use "-au" to avoid re-copying identical files
+rsync -au "$TEMP_WHEEL_DIR/" "$WHEEL_CACHE_DIR/"
 
 # Create wheel index
 echo "📋 Creating wheel index..."

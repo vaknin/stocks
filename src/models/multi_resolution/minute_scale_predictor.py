@@ -100,12 +100,21 @@ class LightweightTemporalCNN(nn.Module):
         
         # Multi-scale convolution
         conv_outputs = []
+        min_len = None
         for conv_layer in self.conv_layers:
-            conv_out = conv_layer(x_conv)  # (batch_size, hidden_dim//n_kernels, seq_len)
+            conv_out = conv_layer(x_conv)  # (batch_size, hidden_dim//n_kernels, seq_len')
+            # Track minimum temporal length across branches to ensure concatenation safety
+            seq_len_out = conv_out.shape[-1]
+            min_len = seq_len_out if min_len is None else min(min_len, seq_len_out)
             conv_outputs.append(conv_out)
+
+        # If different kernel sizes produced different sequence lengths (e.g., even kernels),
+        # center/right-crop to the shortest length before concatenation.
+        if any(out.shape[-1] != min_len for out in conv_outputs):
+            conv_outputs = [out[..., :min_len] for out in conv_outputs]
         
-        # Concatenate multi-scale features
-        x_conv = torch.cat(conv_outputs, dim=1)  # (batch_size, hidden_dim, seq_len)
+        # Concatenate multi-scale features (batch_size, hidden_dim, seq_len_common)
+        x_conv = torch.cat(conv_outputs, dim=1)
         
         # Transpose back for attention: (batch_size, seq_len, hidden_dim)
         x_conv = x_conv.transpose(1, 2)

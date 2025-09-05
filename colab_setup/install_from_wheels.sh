@@ -201,13 +201,14 @@ echo "📦 Installing remaining packages from cached wheels..."
 grep -v "^https://github.com/" "$REQUIREMENTS_FILE" | \
     grep -v "^torch==" | grep -v "^torchvision==" | grep -v "^torchaudio==" | \
     grep -v "^timesfm==" | grep -v "^ninja==" | grep -v "^einops==" | \
-    grep -v "^transformers==" | grep -v "^wandb" | grep -v "^scikit-learn==" | \
-    grep -v "^huggingface-hub" | grep -v "^absl-py" | grep -v "^einshape" | \
+    grep -v "^transformers==" | grep -v "^wandb" | \
+    grep -v "^absl-py" | grep -v "^einshape" | \
     grep -v "^typer" | grep -v "^utilsforecast" \
     > /tmp/requirements_filtered.txt
 
-# Install TimesFM and ALL its dependencies using hybrid approach
-install_with_cache_fallback "timesfm==1.3.0 wandb>=0.17.5 scikit-learn>=1.2.2 huggingface-hub>=0.23.0 absl-py>=1.4.0 einshape>=1.0.0 typer>=0.12.3 utilsforecast>=0.1.10" "TimesFM and dependencies"
+# Install TimesFM and key dependencies using hybrid approach
+# Note: Keep huggingface-hub[cli] and scikit-learn pinned from requirements; do not override here
+install_with_cache_fallback "timesfm==1.3.0 wandb>=0.18.0 absl-py>=1.4.0 einshape>=1.0.0 typer>=0.12.3 utilsforecast>=0.1.10" "TimesFM and dependencies"
 
 # Install remaining packages using enhanced cache-first approach
 echo "📦 Installing remaining packages with cache-first strategy..."
@@ -226,7 +227,7 @@ else
     python3 -m pip install --find-links "$WHEEL_CACHE_DIR" \
         --prefer-binary --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cu121 \
-        --extra-index-url https://data.pyg.org/whl/torch-2.7.0+cu121.html \
+        --extra-index-url https://data.pyg.org/whl/torch-2.7.1+cu121.html \
         -r /tmp/requirements_filtered.txt || {
         echo "⚠️ Some packages failed to install - trying individual installation..."
         # Try installing packages one by one for better error handling

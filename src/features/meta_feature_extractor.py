@@ -42,8 +42,7 @@ class MetaFeatureExtractor:
         
         # Initialize Phase 6 feature generators
         self.technical_generator = TechnicalFeatureGenerator(
-            lookback_window=lookback_window,
-            volatility_window=volatility_window
+            lookback_window=lookback_window
         )
         
         self.microstructure_extractor = MicrostructureFeatureExtractor(
